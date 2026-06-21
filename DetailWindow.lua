@@ -49,7 +49,7 @@ end
 -- Runtime control references, created once in Initialize().
 local windowControl   -- top-level container
 local backdrop        -- background + border
-local titleLabel      -- "<Category> — materials"
+local titleLabel      -- "<Category> - materials"
 local headerName, headerQty, headerValue, headerChange  -- column headers
 local divider
 local listControl     -- ZO_ScrollList
@@ -61,8 +61,14 @@ local currentCategoryId  -- remembered so a refresh can rebuild the same view
 local function SetupRow(rowControl, data)
     rowControl:GetNamedChild("Icon"):SetTexture(data.icon)
 
-    rowControl:GetNamedChild("Name"):SetText(
-        addon.Valuation.ColorizeMaterialName(data.name, data.quality))
+    local nameLabel = rowControl:GetNamedChild("Name")
+    -- The name column is a fixed width (anchored both sides), so long material
+    -- names would be silently clipped mid-word. Ellipsize instead so it reads
+    -- "Decorative Wax Sea…" and the truncation is visible. The full name is
+    -- always available in the game's own item tooltip.
+    nameLabel:SetMaxLineCount(1)
+    nameLabel:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+    nameLabel:SetText(addon.Valuation.ColorizeMaterialName(data.name, data.quality))
 
     rowControl:GetNamedChild("Qty"):SetText(
         Colorize(COLOR_MUTED, ZO_LocalizeDecimalNumber(data.count or 0)))

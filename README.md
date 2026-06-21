@@ -1,8 +1,8 @@
 # Bureau of Material Worth
 
 A lightweight inventory addon for *The Elder Scrolls Online*. It sums the
-**market value of everything in your Craft Bag** and shows the total — with an
-optional breakdown by crafting profession — in a small panel beside the bag.
+**market value of everything in your Craft Bag** and shows the total - with an
+optional breakdown by crafting profession - in a small panel beside the bag.
 The game itself only knows the worthless vendor price; this addon reads real
 trading prices through **LibPrice**, which transparently pulls from whichever
 price source you have installed (Master Merchant, Tamriel Trade Centre, or
@@ -21,16 +21,16 @@ Open your Craft Bag and a slim panel appears beside it: a prominent **grand
 total** in gold at the top, a subtitle with the slot, stack, and item counts, then
 a **per-profession breakdown** (Blacksmithing, Clothier, Woodworking, Jewelry,
 Alchemy, Enchanting, Provisioning, and an "Other" bucket). Hover any category for
-its value, slot count, stack count, item count, and how many slots have no price —
+its value, slot count, stack count, item count, and how many slots have no price -
 or **click a category** to open a scrollable table of every material in it. A
 footer shows **how long ago** the figures were computed and whether **every slot
 has a price**. As you deposit or withdraw materials the total updates on its own.
-That's the whole addon — no gameplay changes, just an answer to "how much is all
+That's the whole addon - no gameplay changes, just an answer to "how much is all
 of this actually worth?".
 
 > **A note on counts:** the Craft Bag stores each material in a single
 > unbounded slot, so the panel reports two distinct figures. **Slots** is the
-> number of occupied Craft Bag slots — i.e. how many *distinct materials* you
+> number of occupied Craft Bag slots - i.e. how many *distinct materials* you
 > hold. **Stacks** is the classic count of 200-item stacks that volume would
 > occupy (`ceil(items / 200)`). One slot holding 350,000 of a material is
 > *1 slot*, *1,750 stacks*, and *350,000 items*.
@@ -57,14 +57,14 @@ of this actually worth?".
 
 ### Per-category material table
 - **Click any category row** to open a separate, scrollable window listing *every
-  individual material* in that profession — handy for "Other", which can hold
+  individual material* in that profession - handy for "Other", which can hold
   hundreds of distinct materials.
 - Each row shows the material's **icon**, its **name** (tinted by quality), the
   **quantity** you hold, and its **total value**. Rows are sorted alphabetically
   by name.
 - A **price-change column** (▲/▼ with a percentage) shows how each material's
   price has moved since it was last recorded. The addon keeps its own price
-  history for this — a material shows "—" the first time you view it, then a real
+  history for this - a material shows "-" the first time you view it, then a real
   change once a baseline exists. The baseline advances roughly once a day, so the
   figure reflects day-over-day market drift rather than noise.
 - The window is **movable** and closes with the Craft Bag, so it never lingers
@@ -79,13 +79,13 @@ of this actually worth?".
   several contributed). When more than half the slots are unpriced the row turns
   to a loud "unpriced!" warning, so the total never silently pretends to be
   complete.
-- A **value-change row** (▲/▼) shows how your Craft Bag's value changed — labeled
-  "This visit" or "This session" — see the note below for exactly what it counts.
-- `/bmw refresh` re-queries prices — handy after Master Merchant or Tamriel Trade
+- A **value-change row** (▲/▼) shows how your Craft Bag's value changed - labeled
+  "This visit" or "This session" - see the note below for exactly what it counts.
+- `/bmw refresh` re-queries prices - handy after Master Merchant or Tamriel Trade
   Centre finishes importing fresh data.
 
 > **How the value-change delta works.** Craft Bag market prices do **not** update
-> live — a price source (Master Merchant / TTC / ATT) only refreshes its data
+> live - a price source (Master Merchant / TTC / ATT) only refreshes its data
 > across a game restart and reimport. So the delta deliberately counts **only
 > changes to your actual stock**: it appears when your total *item count* changed
 > since the baseline (you deposited or withdrew materials), and is **hidden when
@@ -111,11 +111,11 @@ of this actually worth?".
 
 ---
 
-## Why it's built well — the performance story
+## Why it's built well - the performance story
 
 The Craft Bag can hold **hundreds of distinct materials**, and a market
-price lookup is not free. The naïve approach — loop every slot and query the
-price addon, on every inventory event — is exactly what causes the multi-second
+price lookup is not free. The naïve approach - loop every slot and query the
+price addon, on every inventory event - is exactly what causes the multi-second
 freezes you may have seen elsewhere. This addon is built specifically to avoid
 that:
 
@@ -130,7 +130,7 @@ that:
   given material costs **at most one** LibPrice call for the whole session.
   Repeat opens are effectively instant.
 - **Incremental updates.** Depositing or withdrawing a stack while the bag is
-  open updates only *that one slot's* contribution to the running total — an
+  open updates only *that one slot's* contribution to the running total - an
   O(1) adjustment, never a full rescan.
 - **Coalesced refreshes.** A burst of slot updates (e.g. dumping a 200-item
   stack, which fires many per-slot events) collapses into a single window
@@ -144,7 +144,7 @@ that:
 Items are mapped to a crafting profession by their `ITEMTYPE_*`, resolved from
 the game's own constants at load. Each constant is looked up by name and skipped
 if a given client build doesn't define it, so an unexpected client never crashes
-the addon — an unmapped material simply falls into "Other".
+the addon - an unmapped material simply falls into "Other".
 
 ---
 

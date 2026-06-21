@@ -14,9 +14,9 @@ local strings = {
     [SI_BMW_SETTING_CATEGORY_BREAKDOWN_NAME] = "Показывать разбивку по категориям",
     [SI_BMW_SETTING_CATEGORY_BREAKDOWN_TOOLTIP] = "Показывать подытоги по профессиям (кузнечное дело, алхимия, провизия и т.д.) под общей суммой. Если выключено, отображается только общая сумма.",
     [SI_BMW_SETTING_CATEGORY_ICONS_NAME] = "Показывать иконки категорий",
-    [SI_BMW_SETTING_CATEGORY_ICONS_TOOLTIP] = "Показывать небольшую иконку профессии слева от названия каждой категории, чтобы строки читались быстрее. У «Прочего» нет профессии — иконка не отображается.",
+    [SI_BMW_SETTING_CATEGORY_ICONS_TOOLTIP] = "Показывать небольшую иконку профессии слева от названия каждой категории, чтобы строки читались быстрее. У «Прочего» нет профессии - иконка не отображается.",
     [SI_BMW_SETTING_COLOR_SCALE_NAME] = "Окрашивать золото по стоимости",
-    [SI_BMW_SETTING_COLOR_SCALE_TOOLTIP] = "Подкрашивать сумму золота каждой категории в зависимости от величины — от тусклого для малых сумм до яркого для самых больших — чтобы самые ценные категории были заметны сразу. Если выключено, все суммы используют один золотой оттенок.",
+    [SI_BMW_SETTING_COLOR_SCALE_TOOLTIP] = "Подкрашивать сумму золота каждой категории в зависимости от величины - от тусклого для малых сумм до яркого для самых больших - чтобы самые ценные категории были заметны сразу. Если выключено, все суммы используют один золотой оттенок.",
     [SI_BMW_SETTING_SORT_BY_VALUE_NAME] = "Сортировать категории по стоимости",
     [SI_BMW_SETTING_SORT_BY_VALUE_TOOLTIP] = "Упорядочивать строки категорий по убыванию стоимости в золоте, чтобы самые ценные запасы всегда были сверху. Если выключено, используется фиксированный порядок профессий.",
     [SI_BMW_SETTING_DELTA_MODE_NAME] = "База для «с прошлого визита»",
@@ -54,13 +54,13 @@ local strings = {
     [SI_BMW_TOOLTIP_CLICK_HINT] = "Нажмите для полного списка материалов",
 
     -- Detail window: per-category material table (opened by clicking a row)
-    [SI_BMW_DETAIL_TITLE] = "%s — материалы",
+    [SI_BMW_DETAIL_TITLE] = "%s - материалы",
     [SI_BMW_DETAIL_COL_NAME] = "Материал",
     [SI_BMW_DETAIL_COL_QTY] = "Кол-во",
     [SI_BMW_DETAIL_COL_VALUE] = "Стоимость",
     [SI_BMW_DETAIL_COL_CHANGE] = "Изменение",
     [SI_BMW_DETAIL_GROWTH] = "%s%%",
-    [SI_BMW_DETAIL_GROWTH_NEW] = "—",
+    [SI_BMW_DETAIL_GROWTH_NEW] = "-",
     [SI_BMW_DETAIL_EMPTY] = "В этой категории нет материалов.",
 
     -- Window: footer (two-column label -> value rows)

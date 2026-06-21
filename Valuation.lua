@@ -25,6 +25,7 @@ local GetItemLinkFunctionalQuality = GetItemLinkFunctionalQuality
 local GetItemQualityColor         = GetItemQualityColor
 local GetTimeStamp                = GetTimeStamp
 local zo_round                    = zo_round
+local zo_strformat                = zo_strformat
 local tablesort                   = table.sort
 
 local BAG = BAG_VIRTUAL
@@ -703,7 +704,11 @@ function Valuation.GetCategoryMaterials(categoryId)
 
             materials[#materials + 1] = {
                 itemId = info.itemId,
-                name = GetItemLinkName(itemLink),
+                -- GetItemLinkName returns the raw, unformatted name (often
+                -- lower-case in the client's data, e.g. "rubedite ore"); the
+                -- game title-cases and cleans it via zo_strformat before
+                -- display, so do the same here or names render lower-case.
+                name = zo_strformat(SI_TOOLTIP_ITEM_NAME, GetItemLinkName(itemLink)),
                 icon = GetItemLinkIcon(itemLink),
                 quality = quality,
                 count = info.stack,

@@ -13,7 +13,7 @@ local strings = {
     SI_BMW_SETTING_CATEGORY_ICONS_NAME = "Show category icons",
     SI_BMW_SETTING_CATEGORY_ICONS_TOOLTIP = "Show a small profession icon to the left of each category name, so the rows are quicker to scan. \"Other\" has no profession and shows no icon.",
     SI_BMW_SETTING_COLOR_SCALE_NAME = "Color gold by value",
-    SI_BMW_SETTING_COLOR_SCALE_TOOLTIP = "Tint each category's gold figure by how large it is — dim for small amounts up to a hot color for the biggest — so your most valuable categories stand out at a glance. When off, all figures use the same gold tone.",
+    SI_BMW_SETTING_COLOR_SCALE_TOOLTIP = "Tint each category's gold figure by how large it is - dim for small amounts up to a hot color for the biggest - so your most valuable categories stand out at a glance. When off, all figures use the same gold tone.",
     SI_BMW_SETTING_SORT_BY_VALUE_NAME = "Sort categories by value",
     SI_BMW_SETTING_SORT_BY_VALUE_TOOLTIP = "Order the category rows by descending gold value, so your most valuable holdings are always on top. When off, they follow the fixed profession order.",
     SI_BMW_SETTING_DELTA_MODE_NAME = "\"Since last visit\" baseline",
@@ -53,7 +53,7 @@ local strings = {
     SI_BMW_TOOLTIP_CLICK_HINT = "Click for the full material list",
 
     -- Detail window: per-category material table (opened by clicking a row)
-    SI_BMW_DETAIL_TITLE = "%s — materials",
+    SI_BMW_DETAIL_TITLE = "%s - materials",
     SI_BMW_DETAIL_COL_NAME = "Material",
     SI_BMW_DETAIL_COL_QTY = "Qty",
     SI_BMW_DETAIL_COL_VALUE = "Value",
@@ -62,7 +62,7 @@ local strings = {
     -- %s = the percentage (one decimal place).
     SI_BMW_DETAIL_GROWTH = "%s%%",
     -- Shown when a material has no recorded price baseline yet, or no price.
-    SI_BMW_DETAIL_GROWTH_NEW = "—",
+    SI_BMW_DETAIL_GROWTH_NEW = "-",
     SI_BMW_DETAIL_EMPTY = "No materials in this category.",
 
     -- Window: footer (two-column label -> value rows)
