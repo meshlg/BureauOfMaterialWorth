@@ -1,0 +1,52 @@
+## Title: Bureau of Material Worth |c6FCB9Fv1.0.21061745|r
+## Version: 1.0.21061745
+## AddOnVersion: 1000
+## APIVersion: 101050
+## Author: |c6FCB9Fmeshlg|r
+## Description: Sums the market value of your entire Craft Bag (via LibPrice: Master Merchant / Tamriel Trade Centre / Arkadius' Trade Tools) and shows the total with an optional per-profession breakdown in a small panel beside the Craft Bag.
+## SavedVariables: BureauOfMaterialWorth_SavedVariables
+## DependsOn: LibAddonMenu-2.0>=43 LibPrice
+
+
+
+; Localization files are loaded in the following order, with later files overriding earlier ones. This allows for a default English localization to be provided, while still allowing users to create their own localizations without needing to copy the entire file.
+Localization/en.lua
+Localization/$(language).lua
+; ---------------------------------------------------------------------------
+
+; The main addon files are loaded in the following order, with later files overriding earlier ones. This allows for a clear separation of concerns and modularity in the codebase.
+BureauOfMaterialWorth.lua
+Valuation.lua
+Window.lua
+Settings.lua
+; ---------------------------------------------------------------------------
+
+
+
+; This Add-on is not created by, affiliated with or sponsored by ZeniMax
+; Media Inc. or its affiliates. The Elder Scrolls® and related logos are
+; registered trademarks or trademarks of ZeniMax Media Inc. in the United
+; States and/or other countries. All rights reserved.
+;
+; You can read the full terms at:
+; https://account.elderscrollsonline.com/add-on-terms
+
+
+
+; ===========================================================================
+; Development Note
+; ---------------------------------------------------------------------------
+
+; During the development of this addon, the AI assistant Claude Opus 4.8 was 
+; utilized in a strictly technical capacity. Its role was limited to 
+; debugging, Lua optimization, performance tuning, and preventing potential 
+; memory leaks or unsafe code practices. All AI-assisted code has been 
+; manually reviewed, tested, and verified by the developer.
+
+; ===========================================================================
+; P.S.
+; ---------------------------------------------------------------------------
+
+; If the mere mention of AI makes you panic, this addon might not be for you. 
+; Otherwise, rest assured: stability and performance are polished to the 
+; highest standard, ensuring zero noticeable impact on your FPS or game memory.
