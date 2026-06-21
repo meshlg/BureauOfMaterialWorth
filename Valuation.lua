@@ -18,6 +18,26 @@ local LibPrice                  = LibPrice
 
 local BAG = BAG_VIRTUAL
 
+-- A "classic" inventory stack is 200 identical items. The craft bag itself has
+-- no such limit (one material = one unbounded slot), so we report two distinct
+-- figures that must never be conflated:
+--   slots  -- occupied craft-bag slots == number of distinct materials
+--   stacks -- ceil(items / STACK_SIZE), how many 200-item stacks the volume is
+-- The slot count is what the incremental aggregates track; the stack count is
+-- derived from the item total at snapshot time (see GetSnapshot).
+local STACK_SIZE = 200
+
+local zo_ceil = zo_ceil
+
+-- Number of classic 200-item stacks a raw item count occupies. 0 items -> 0
+-- stacks; any partial stack rounds up to a whole one.
+local function ItemsToStacks(items)
+    if not items or items <= 0 then
+        return 0
+    end
+    return zo_ceil(items / STACK_SIZE)
+end
+
 local LogDebug = private.LogDebug
 local LogInfo = private.LogInfo
 
@@ -127,19 +147,22 @@ end
 -- holds the running per-category aggregates the window reads; the grand* values
 -- are the bag-wide rollup. This is the heart of the "no 5-10s freeze" design.
 --
--- categoryStats[categoryId] = { gold, stacks, items, unpricedStacks }
+-- categoryStats[categoryId] = { gold, slots, items, unpricedSlots }
 --   gold          summed market value of the category
---   stacks        number of occupied slots (a "stack" = one slot)
---   items         summed stack sizes (e.g. one slot of 200 = 200 items)
---   unpricedStacks  occupied slots with no available price
+--   slots         number of occupied craft-bag slots (== distinct materials)
+--   items         summed slot sizes (e.g. one slot of 350000 = 350000 items)
+--   unpricedSlots occupied slots with no available price
+-- The classic 200-item stack count is NOT stored here; it is derived from
+-- `items` via ItemsToStacks() at snapshot time so the two figures can never
+-- drift out of sync.
 local slotInfo = {}         -- [slotIndex] = { value, category, stack, priced }
 local priceCache = {}       -- [itemId] = per-unit gold (false = known-unpriced)
-local categoryStats = {}    -- [categoryId] = { gold, stacks, items, unpricedStacks }
+local categoryStats = {}    -- [categoryId] = { gold, slots, items, unpricedSlots }
 
 local grandGold = 0
-local grandStacks = 0
+local grandSlots = 0
 local grandItems = 0
-local grandUnpricedStacks = 0
+local grandUnpricedSlots = 0
 
 local lastScanTimeMs = nil  -- GetGameTimeMilliseconds() of the last full/partial recompute
 local isDirty = true        -- valuation may be stale; rescan on next show
@@ -155,7 +178,7 @@ local REFRESH_TIMER_NAME = addon.name .. "_QueuedRefresh"
 local function GetOrCreateCategoryStat(categoryId)
     local stat = categoryStats[categoryId]
     if not stat then
-        stat = { gold = 0, stacks = 0, items = 0, unpricedStacks = 0 }
+        stat = { gold = 0, slots = 0, items = 0, unpricedSlots = 0 }
         categoryStats[categoryId] = stat
     end
     return stat
@@ -217,21 +240,21 @@ local function RemoveSlotFromAggregates(slotIndex)
     local stat = categoryStats[info.category]
     if stat then
         stat.gold = stat.gold - info.value
-        stat.stacks = stat.stacks - 1
+        stat.slots = stat.slots - 1
         stat.items = stat.items - info.stack
         if not info.priced then
-            stat.unpricedStacks = stat.unpricedStacks - 1
+            stat.unpricedSlots = stat.unpricedSlots - 1
         end
-        if stat.stacks <= 0 then
+        if stat.slots <= 0 then
             categoryStats[info.category] = nil
         end
     end
 
     grandGold = grandGold - info.value
-    grandStacks = grandStacks - 1
+    grandSlots = grandSlots - 1
     grandItems = grandItems - info.stack
     if not info.priced then
-        grandUnpricedStacks = grandUnpricedStacks - 1
+        grandUnpricedSlots = grandUnpricedSlots - 1
     end
 
     slotInfo[slotIndex] = nil
@@ -248,17 +271,17 @@ local function AddSlotToAggregates(slotIndex, info)
 
     local stat = GetOrCreateCategoryStat(info.category)
     stat.gold = stat.gold + info.value
-    stat.stacks = stat.stacks + 1
+    stat.slots = stat.slots + 1
     stat.items = stat.items + info.stack
     if not info.priced then
-        stat.unpricedStacks = stat.unpricedStacks + 1
+        stat.unpricedSlots = stat.unpricedSlots + 1
     end
 
     grandGold = grandGold + info.value
-    grandStacks = grandStacks + 1
+    grandSlots = grandSlots + 1
     grandItems = grandItems + info.stack
     if not info.priced then
-        grandUnpricedStacks = grandUnpricedStacks + 1
+        grandUnpricedSlots = grandUnpricedSlots + 1
     end
 end
 
@@ -266,9 +289,9 @@ local function ResetAggregates()
     ZO_ClearTable(slotInfo)
     ZO_ClearTable(categoryStats)
     grandGold = 0
-    grandStacks = 0
+    grandSlots = 0
     grandItems = 0
-    grandUnpricedStacks = 0
+    grandUnpricedSlots = 0
 end
 
 -- Full single-pass scan of the craft bag, rebuilding every aggregate from the
@@ -392,41 +415,45 @@ end
 -- Snapshot consumed by the window. Returns a single table so the window does one
 -- call and reads a stable view:
 --   {
---     gold, stacks, items, unpricedStacks,   -- bag-wide rollup
---     lastScanTimeMs,                         -- when the data was last computed
---     categories = { { id, name, gold, stacks, items, unpricedStacks }, ... }
+--     gold, slots, stacks, items, unpricedSlots,  -- bag-wide rollup
+--     lastScanTimeMs,                              -- when the data was last computed
+--     categories = { { id, name, gold, slots, stacks, items, unpricedSlots }, ... }
 --   }
--- Category rows are emitted in the canonical display order, only for categories
--- that currently hold at least one stack.
+-- `slots` is occupied craft-bag slots (distinct materials); `stacks` is the
+-- derived count of classic 200-item stacks (ceil(items / 200)). Category rows
+-- are emitted in the canonical display order, only for categories that
+-- currently hold at least one slot.
 function Valuation.GetSnapshot()
     local categories = {}
     for index = 1, #CATEGORY_DEFINITIONS do
         local def = CATEGORY_DEFINITIONS[index]
         local stat = categoryStats[def.id]
-        if stat and stat.stacks > 0 then
+        if stat and stat.slots > 0 then
             categories[#categories + 1] = {
                 id = def.id,
                 name = GetString(def.nameKey),
                 gold = stat.gold,
-                stacks = stat.stacks,
+                slots = stat.slots,
+                stacks = ItemsToStacks(stat.items),
                 items = stat.items,
-                unpricedStacks = stat.unpricedStacks,
+                unpricedSlots = stat.unpricedSlots,
             }
         end
     end
 
     return {
         gold = grandGold,
-        stacks = grandStacks,
+        slots = grandSlots,
+        stacks = ItemsToStacks(grandItems),
         items = grandItems,
-        unpricedStacks = grandUnpricedStacks,
+        unpricedSlots = grandUnpricedSlots,
         lastScanTimeMs = lastScanTimeMs,
         categories = categories,
     }
 end
 
 function Valuation.GetStatus()
-    return grandGold, grandStacks - grandUnpricedStacks, grandUnpricedStacks
+    return grandGold, grandSlots - grandUnpricedSlots, grandUnpricedSlots
 end
 
 private.GetValuationSnapshot = Valuation.GetSnapshot

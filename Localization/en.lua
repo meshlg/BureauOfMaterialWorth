@@ -21,19 +21,22 @@ local strings = {
 
     -- Window
     SI_BMW_WINDOW_TITLE = "Craft Bag Worth",
-    SI_BMW_WINDOW_SUBTITLE = "%d stacks · %s items",
+    -- %d = occupied slots (distinct materials), %s = classic 200-item stacks,
+    -- %s = total item count.
+    SI_BMW_WINDOW_SUBTITLE = "%d slots · %s stacks · %s items",
     SI_BMW_WINDOW_EMPTY = "Craft Bag is empty",
 
     -- Window: per-category hover tooltip
     SI_BMW_TOOLTIP_VALUE = "Value: %s gold",
-    SI_BMW_TOOLTIP_STACKS = "Stacks: %d",
+    SI_BMW_TOOLTIP_SLOTS = "Slots (distinct materials): %d",
+    SI_BMW_TOOLTIP_STACKS = "Stacks of 200: %s",
     SI_BMW_TOOLTIP_ITEMS = "Items: %s",
-    SI_BMW_TOOLTIP_UNPRICED = "Without price: %d stacks",
+    SI_BMW_TOOLTIP_UNPRICED = "Without price: %d slots",
 
     -- Window: footer
     SI_BMW_FOOTER_UPDATED = "Updated %s",
-    SI_BMW_FOOTER_ALL_PRICED = "All stacks priced",
-    SI_BMW_FOOTER_SOME_UNPRICED = "%d of %d stacks have no price data",
+    SI_BMW_FOOTER_ALL_PRICED = "All slots priced",
+    SI_BMW_FOOTER_SOME_UNPRICED = "%d of %d slots have no price data",
 
     -- Window: relative time
     SI_BMW_TIME_NEVER = "never",
@@ -82,7 +85,7 @@ local strings = {
     SI_BMW_MSG_LIBPRICE_MISSING = "LibPrice is not installed. Bureau of Material Worth needs LibPrice (and a price source such as Master Merchant or Tamriel Trade Centre) to work.",
     SI_BMW_MSG_VERSION_DEBUG = "Version %s | Debug: %s (%d)",
     SI_BMW_MSG_STATUS_TOTAL = "Craft Bag value: %s gold.",
-    SI_BMW_MSG_STATUS_SLOTS = "Priced stacks: %d | unpriced stacks: %d.",
+    SI_BMW_MSG_STATUS_SLOTS = "Priced slots: %d | unpriced slots: %d.",
     SI_BMW_MSG_REFRESH_DONE = "Prices refreshed.",
     SI_BMW_MSG_DEBUG_MODE_SET = "Debug mode set to %s (%d).",
     SI_BMW_MSG_INVALID_DEBUG_LEVEL = "Invalid debug level. Use a number from 0 to 4.",

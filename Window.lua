@@ -22,7 +22,7 @@ local COLOR_WARN     = "D0905E"  -- amber: "missing price" hint
 -- a title, a prominent grand total, a subtitle, a divider, one row per non-empty
 -- category, another divider, then a two-line footer. Category rows are two
 -- columns (name left, gold right) so the figures line up.
-local WINDOW_WIDTH   = 260
+local WINDOW_WIDTH   = 320
 local PADDING        = 12
 local TITLE_HEIGHT   = 22
 local TOTAL_HEIGHT   = 30
@@ -70,7 +70,7 @@ end
 local windowControl   -- top-level container
 local titleLabel      -- "Craft Bag Worth"
 local totalLabel      -- prominent grand-total gold figure
-local subtitleLabel   -- "<n> stacks · <n> items"
+local subtitleLabel   -- "<n> slots · <n> stacks · <n> items"
 local dividerTop      -- line under the header block
 local dividerBottom   -- line above the footer
 local footerUpdated   -- "Updated <ago>"
@@ -143,13 +143,15 @@ local function AcquireRow(index)
         ZO_Tooltip_AddDivider(InformationTooltip)
         InformationTooltip:AddLine(stringformat(GetString(SI_BMW_TOOLTIP_VALUE),
             ZO_LocalizeDecimalNumber(zo_round(data.gold))), "ZoFontGame", 1, 0.82, 0.25)
+        InformationTooltip:AddLine(stringformat(GetString(SI_BMW_TOOLTIP_SLOTS),
+            data.slots), "ZoFontGame", 0.86, 0.85, 0.78)
         InformationTooltip:AddLine(stringformat(GetString(SI_BMW_TOOLTIP_STACKS),
-            data.stacks), "ZoFontGame", 0.86, 0.85, 0.78)
+            ZO_LocalizeDecimalNumber(data.stacks)), "ZoFontGame", 0.86, 0.85, 0.78)
         InformationTooltip:AddLine(stringformat(GetString(SI_BMW_TOOLTIP_ITEMS),
             ZO_LocalizeDecimalNumber(data.items)), "ZoFontGame", 0.86, 0.85, 0.78)
-        if data.unpricedStacks > 0 then
+        if data.unpricedSlots > 0 then
             InformationTooltip:AddLine(stringformat(GetString(SI_BMW_TOOLTIP_UNPRICED),
-                data.unpricedStacks), "ZoFontGame", 0.82, 0.56, 0.37)
+                data.unpricedSlots), "ZoFontGame", 0.82, 0.56, 0.37)
         end
     end)
     container:SetHandler("OnMouseExit", function()
@@ -223,10 +225,10 @@ local function RenderFooter()
     footerUpdated:SetText(Colorize(COLOR_MUTED,
         stringformat(GetString(SI_BMW_FOOTER_UPDATED), FormatTimeAgo(lastSnapshot.lastScanTimeMs))))
 
-    if lastSnapshot.unpricedStacks > 0 then
+    if lastSnapshot.unpricedSlots > 0 then
         footerPrices:SetText(Colorize(COLOR_WARN,
             stringformat(GetString(SI_BMW_FOOTER_SOME_UNPRICED),
-                lastSnapshot.unpricedStacks, lastSnapshot.stacks)))
+                lastSnapshot.unpricedSlots, lastSnapshot.slots)))
     else
         footerPrices:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_FOOTER_ALL_PRICED)))
     end
@@ -253,11 +255,13 @@ function Window.Update()
     -- Header block: prominent total + subtitle counts.
     totalLabel:SetText(FormatGold(snapshot.gold))
 
-    if snapshot.stacks > 0 then
+    if snapshot.slots > 0 then
         subtitleLabel:SetHidden(false)
         subtitleLabel:SetText(Colorize(COLOR_MUTED, stringformat(
             GetString(SI_BMW_WINDOW_SUBTITLE),
-            snapshot.stacks, ZO_LocalizeDecimalNumber(snapshot.items))))
+            snapshot.slots,
+            ZO_LocalizeDecimalNumber(snapshot.stacks),
+            ZO_LocalizeDecimalNumber(snapshot.items))))
     else
         subtitleLabel:SetHidden(false)
         subtitleLabel:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_WINDOW_EMPTY)))
@@ -281,10 +285,10 @@ function Window.Update()
             local row = AcquireRow(i)
             row.data = data
             row.name:SetText(Colorize(COLOR_NAME, data.name))
-            -- Flag categories that have unpriced stacks with a subtle marker so
+            -- Flag categories that have unpriced slots with a subtle marker so
             -- the total reads honestly at a glance, detail is in the tooltip.
             local goldText = FormatGold(data.gold)
-            if data.unpricedStacks > 0 then
+            if data.unpricedSlots > 0 then
                 goldText = goldText .. " " .. Colorize(COLOR_WARN, "*")
             end
             row.gold:SetText(goldText)

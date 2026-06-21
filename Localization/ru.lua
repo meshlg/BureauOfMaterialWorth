@@ -24,19 +24,22 @@ local strings = {
 
     -- Window
     [SI_BMW_WINDOW_TITLE] = "Стоимость сумки",
-    [SI_BMW_WINDOW_SUBTITLE] = "%d стаков · %s предметов",
+    -- %d = занятые ячейки (уникальные материалы), %s = классические стаки по 200,
+    -- %s = общее число предметов.
+    [SI_BMW_WINDOW_SUBTITLE] = "%d ячеек · %s стаков · %s предметов",
     [SI_BMW_WINDOW_EMPTY] = "Ремесленная сумка пуста",
 
     -- Window: per-category hover tooltip
     [SI_BMW_TOOLTIP_VALUE] = "Стоимость: %s золота",
-    [SI_BMW_TOOLTIP_STACKS] = "Стаков: %d",
+    [SI_BMW_TOOLTIP_SLOTS] = "Ячеек (уникальных материалов): %d",
+    [SI_BMW_TOOLTIP_STACKS] = "Стаков по 200: %s",
     [SI_BMW_TOOLTIP_ITEMS] = "Предметов: %s",
-    [SI_BMW_TOOLTIP_UNPRICED] = "Без цены: %d стаков",
+    [SI_BMW_TOOLTIP_UNPRICED] = "Без цены: %d ячеек",
 
     -- Window: footer
     [SI_BMW_FOOTER_UPDATED] = "Обновлено %s",
-    [SI_BMW_FOOTER_ALL_PRICED] = "Все стаки оценены",
-    [SI_BMW_FOOTER_SOME_UNPRICED] = "%d из %d стаков без данных о цене",
+    [SI_BMW_FOOTER_ALL_PRICED] = "Все ячейки оценены",
+    [SI_BMW_FOOTER_SOME_UNPRICED] = "%d из %d ячеек без данных о цене",
 
     -- Window: relative time
     [SI_BMW_TIME_NEVER] = "никогда",
@@ -79,7 +82,7 @@ local strings = {
     [SI_BMW_MSG_LIBPRICE_MISSING] = "LibPrice не установлен. Bureau of Material Worth требует LibPrice (и источник цен, например Master Merchant или Tamriel Trade Centre) для работы.",
     [SI_BMW_MSG_VERSION_DEBUG] = "Версия %s | Отладка: %s (%d)",
     [SI_BMW_MSG_STATUS_TOTAL] = "Стоимость ремесленной сумки: %s золота.",
-    [SI_BMW_MSG_STATUS_SLOTS] = "Стаков с ценой: %d | без цены: %d.",
+    [SI_BMW_MSG_STATUS_SLOTS] = "Ячеек с ценой: %d | без цены: %d.",
     [SI_BMW_MSG_REFRESH_DONE] = "Цены обновлены.",
     [SI_BMW_MSG_DEBUG_MODE_SET] = "Режим отладки: %s (%d).",
     [SI_BMW_MSG_INVALID_DEBUG_LEVEL] = "Неверный уровень отладки. Используйте число от 0 до 4.",

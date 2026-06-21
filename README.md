@@ -18,35 +18,44 @@ Arkadius' Trade Tools).
 ## What it does
 
 Open your Craft Bag and a slim panel appears beside it: a prominent **grand
-total** in gold at the top, a subtitle with the total stack and item counts, then
+total** in gold at the top, a subtitle with the slot, stack, and item counts, then
 a **per-profession breakdown** (Blacksmithing, Clothier, Woodworking, Jewelry,
 Alchemy, Enchanting, Provisioning, and an "Other" bucket). Hover any category for
-its value, stack count, item count, and how many stacks have no price. A footer
-shows **how long ago** the figures were computed and whether **every stack has a
-price**. As you deposit or withdraw materials the total updates on its own.
+its value, slot count, stack count, item count, and how many slots have no price. A
+footer shows **how long ago** the figures were computed and whether **every slot
+has a price**. As you deposit or withdraw materials the total updates on its own.
 That's the whole addon — no gameplay changes, just an answer to "how much is all
 of this actually worth?".
+
+> **A note on counts:** the Craft Bag stores each material in a single
+> unbounded slot, so the panel reports two distinct figures. **Slots** is the
+> number of occupied Craft Bag slots — i.e. how many *distinct materials* you
+> hold. **Stacks** is the classic count of 200-item stacks that volume would
+> occupy (`ceil(items / 200)`). One slot holding 350,000 of a material is
+> *1 slot*, *1,750 stacks*, and *350,000 items*.
 
 ---
 
 ## Features
 
 ### Craft Bag valuation
-- Sums the LibPrice market value of every stack in the Craft Bag, accounting for
-  stack sizes (price × count per stack).
-- A **prominent grand total** with a subtitle showing total stacks and items.
+- Sums the LibPrice market value of every slot in the Craft Bag, accounting for
+  stack sizes (price × count per slot).
+- A **prominent grand total** with a subtitle showing total slots, stacks, and
+  items.
 - A **per-profession breakdown** beneath it, which you can turn off to show just
   the total.
-- **Hover tooltips** on each category reveal its value, stack count, item count
-  (one stack can hold up to 200 items), and how many of its stacks have no price.
+- **Hover tooltips** on each category reveal its value, slot count (distinct
+  materials), stack count (in classic 200-item stacks), item count, and how many
+  of its slots have no price.
 - Values are formatted with thousands separators and the gold icon, so the panel
   reads at a glance.
 
 ### Honest about its data
 - A footer line shows **when the value was last computed** ("just now", "5m ago",
   …), refreshed live while the bag is open.
-- A second footer line reports **price coverage**: either "all stacks priced" or
-  how many stacks LibPrice has no data for. Categories with gaps are flagged with
+- A second footer line reports **price coverage**: either "all slots priced" or
+  how many slots LibPrice has no data for. Categories with gaps are flagged with
   a subtle marker, so the total never silently pretends to be complete.
 - `/bmw refresh` re-queries prices — handy after Master Merchant or Tamriel Trade
   Centre finishes importing fresh data.
@@ -65,7 +74,7 @@ of this actually worth?".
 
 ## Why it's built well — the performance story
 
-The Craft Bag can hold **hundreds of distinct material stacks**, and a market
+The Craft Bag can hold **hundreds of distinct materials**, and a market
 price lookup is not free. The naïve approach — loop every slot and query the
 price addon, on every inventory event — is exactly what causes the multi-second
 freezes you may have seen elsewhere. This addon is built specifically to avoid
