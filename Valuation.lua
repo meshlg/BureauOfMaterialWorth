@@ -41,6 +41,26 @@ end
 local LogDebug = private.LogDebug
 local LogInfo = private.LogInfo
 
+-- Human-readable names for LibPrice source keys (the second return of
+-- ItemLinkToPriceGold). LibPrice has no built-in display-name map, so we keep
+-- our own; an unknown key falls back to its raw string rather than erroring.
+local SOURCE_DISPLAY_NAMES = {
+    mm    = "Master Merchant",
+    att   = "Arkadius' Trade Tools",
+    ttc   = "Tamriel Trade Centre",
+    furc  = "Furniture Catalogue",
+    crown = "Crown Store",
+    rolis = "Rolis Hlaalu",
+    npc   = "NPC Vendor",
+}
+
+local function SourceDisplayName(sourceKey)
+    if not sourceKey then
+        return nil
+    end
+    return SOURCE_DISPLAY_NAMES[sourceKey] or sourceKey
+end
+
 -- Category model
 -- ---------------------------------------------------------------------------
 -- Categories mirror the crafting professions the craft bag is organized by.
@@ -155,14 +175,28 @@ end
 -- The classic 200-item stack count is NOT stored here; it is derived from
 -- `items` via ItemsToStacks() at snapshot time so the two figures can never
 -- drift out of sync.
-local slotInfo = {}         -- [slotIndex] = { value, category, stack, priced }
+local slotInfo = {}         -- [slotIndex] = { value, category, stack, priced, source }
 local priceCache = {}       -- [itemId] = per-unit gold (false = known-unpriced)
+local priceSource = {}      -- [itemId] = LibPrice source key ("mm"/"ttc"/...) when priced
 local categoryStats = {}    -- [categoryId] = { gold, slots, items, unpricedSlots }
+local sourceCounts = {}     -- [sourceKey] = number of priced slots sourced from it
 
 local grandGold = 0
 local grandSlots = 0
 local grandItems = 0
 local grandUnpricedSlots = 0
+
+-- "Since last visit" delta shown in the footer, recomputed once per bag open.
+-- Two baselines feed it depending on the user's deltaMode setting:
+--   "visit"   -- compare against the previous bag open; baseline persists in
+--                savedVars (lastVisitGold/Items) so it survives a restart.
+--   "session" -- compare against the first open after UI load; baseline lives in
+--                the memory upvalues below and resets on /reloadui or logout.
+-- In both modes the gold delta is gated on the item count changing, so a pure
+-- price drift (restart + price reimport, same stock) reports no delta.
+local deltaSinceLastVisit = nil
+local sessionBaseGold = nil   -- session-mode baseline: gold at first open this session
+local sessionBaseItems = nil  -- session-mode baseline: item count alongside it
 
 local lastScanTimeMs = nil  -- GetGameTimeMilliseconds() of the last full/partial recompute
 local isDirty = true        -- valuation may be stale; rescan on next show
@@ -184,30 +218,35 @@ local function GetOrCreateCategoryStat(categoryId)
     return stat
 end
 
--- Per-unit price for an itemId, memoized. Returns a number, or 0 when no price
--- source has data. We cache the "unpriced" verdict as false so a missing price
--- is not re-queried on every rescan within a session.
+-- Per-unit price for an itemId, memoized. Returns the per-unit gold (or 0 when
+-- no source has data), a priced flag, and the LibPrice source key the price came
+-- from ("mm"/"ttc"/"att"/...) or nil when unpriced. We cache the "unpriced"
+-- verdict as false so a missing price is not re-queried on every rescan within a
+-- session; the source key is memoized alongside it.
 local function GetUnitPrice(itemId, itemLink)
     local cached = priceCache[itemId]
     if cached ~= nil then
-        return cached or 0, cached ~= false
+        return cached or 0, cached ~= false, priceSource[itemId]
     end
 
-    local gold = LibPrice.ItemLinkToPriceGold(itemLink)
+    local gold, sourceKey = LibPrice.ItemLinkToPriceGold(itemLink)
     if gold and gold > 0 then
         priceCache[itemId] = gold
-        return gold, true
+        priceSource[itemId] = sourceKey
+        return gold, true, sourceKey
     end
 
     priceCache[itemId] = false
-    return 0, false
+    priceSource[itemId] = nil
+    return 0, false, nil
 end
 
 -- Compute a single slot's contribution WITHOUT touching the running aggregates.
--- Returns an info record { value, category, stack, priced } for an occupied
--- slot, or nil for an empty/unknown slot. Empty virtual slots (the craft bag
--- keeps slots around after a material is fully removed) have stack size 0 and
--- contribute nothing -- this is the GetItemId/stack guard the user called out.
+-- Returns an info record { value, category, stack, priced, source } for an
+-- occupied slot, or nil for an empty/unknown slot. Empty virtual slots (the
+-- craft bag keeps slots around after a material is fully removed) have stack
+-- size 0 and contribute nothing -- this is the GetItemId/stack guard the user
+-- called out.
 local function ComputeSlot(slotIndex)
     local stack = GetSlotStackSize(BAG, slotIndex)
     if not stack or stack <= 0 then
@@ -220,12 +259,13 @@ local function ComputeSlot(slotIndex)
     end
 
     local itemLink = GetItemLink(BAG, slotIndex)
-    local unitPrice, wasPriced = GetUnitPrice(itemId, itemLink)
+    local unitPrice, wasPriced, sourceKey = GetUnitPrice(itemId, itemLink)
     return {
         value = unitPrice * stack,
         category = ResolveCategory(itemLink),
         stack = stack,
         priced = wasPriced,
+        source = sourceKey,
     }
 end
 
@@ -257,6 +297,16 @@ local function RemoveSlotFromAggregates(slotIndex)
         grandUnpricedSlots = grandUnpricedSlots - 1
     end
 
+    -- Drop this slot from the per-source tally so the footer's "Prices: X"
+    -- reflects only currently-occupied priced slots.
+    if info.source then
+        local count = sourceCounts[info.source]
+        if count then
+            count = count - 1
+            sourceCounts[info.source] = count > 0 and count or nil
+        end
+    end
+
     slotInfo[slotIndex] = nil
 end
 
@@ -283,11 +333,16 @@ local function AddSlotToAggregates(slotIndex, info)
     if not info.priced then
         grandUnpricedSlots = grandUnpricedSlots + 1
     end
+
+    if info.source then
+        sourceCounts[info.source] = (sourceCounts[info.source] or 0) + 1
+    end
 end
 
 local function ResetAggregates()
     ZO_ClearTable(slotInfo)
     ZO_ClearTable(categoryStats)
+    ZO_ClearTable(sourceCounts)
     grandGold = 0
     grandSlots = 0
     grandItems = 0
@@ -395,6 +450,42 @@ function Valuation.OnCraftBagShown()
     if isDirty then
         FullRescan()
     end
+
+    -- "Since last visit" delta, computed once per open so incremental updates
+    -- during the visit don't move it under the user. The baseline depends on the
+    -- configured mode; in both, the gold delta is gated on the item count
+    -- changing so a pure price drift (restart + reimport, same stock) shows
+    -- nothing rather than a misleading "+2M".
+    local sv = private.savedVars
+    local mode = (sv and sv.deltaMode) or "visit"
+
+    if mode == "session" then
+        -- Compare against the first open of this session; baseline lives in
+        -- memory and resets on reloadui/logout. Establish it on first open.
+        if sessionBaseGold ~= nil and sessionBaseItems ~= nil and sessionBaseItems ~= grandItems then
+            deltaSinceLastVisit = grandGold - sessionBaseGold
+        else
+            deltaSinceLastVisit = nil
+        end
+        if sessionBaseGold == nil then
+            sessionBaseGold = grandGold
+            sessionBaseItems = grandItems
+        end
+    elseif sv then
+        -- Visit mode: compare against the previous open, then advance the
+        -- persisted baseline so the next visit measures from here.
+        local previousGold = sv.lastVisitGold
+        local previousItems = sv.lastVisitItems
+        if previousGold ~= nil and previousItems ~= nil and previousItems ~= grandItems then
+            deltaSinceLastVisit = grandGold - previousGold
+        else
+            deltaSinceLastVisit = nil
+        end
+        sv.lastVisitGold = grandGold
+        sv.lastVisitItems = grandItems
+    else
+        deltaSinceLastVisit = nil
+    end
 end
 
 function Valuation.OnCraftBagHidden()
@@ -412,18 +503,39 @@ function Valuation.ForceRefresh()
     end
 end
 
+-- The price source covering the most priced slots, as a display name, plus a
+-- flag for whether more than one source contributed. Lets the footer read
+-- "Prices: Master Merchant" (or "... (+others)") so the user knows where the
+-- figures came from. Returns nil when nothing is priced.
+local function GetDominantSource()
+    local bestKey, bestCount = nil, 0
+    local distinct = 0
+    for sourceKey, count in pairs(sourceCounts) do
+        distinct = distinct + 1
+        if count > bestCount then
+            bestKey, bestCount = sourceKey, count
+        end
+    end
+    if not bestKey then
+        return nil, false
+    end
+    return SourceDisplayName(bestKey), distinct > 1
+end
+
 -- Snapshot consumed by the window. Returns a single table so the window does one
 -- call and reads a stable view:
 --   {
 --     gold, slots, stacks, items, unpricedSlots,  -- bag-wide rollup
+--     delta,                                       -- gold change since last visit (or nil)
+--     sourceName, sourceHasOthers,                 -- dominant price source for the footer
 --     lastScanTimeMs,                              -- when the data was last computed
 --     categories = { { id, name, gold, slots, stacks, items, unpricedSlots }, ... }
 --   }
 -- `slots` is occupied craft-bag slots (distinct materials); `stacks` is the
 -- derived count of classic 200-item stacks (ceil(items / 200)). Category rows
--- are emitted in the canonical display order, only for categories that
--- currently hold at least one slot.
-function Valuation.GetSnapshot()
+-- are emitted in canonical display order, or sorted by descending value when the
+-- caller passes sortByValue.
+function Valuation.GetSnapshot(sortByValue)
     local categories = {}
     for index = 1, #CATEGORY_DEFINITIONS do
         local def = CATEGORY_DEFINITIONS[index]
@@ -441,12 +553,29 @@ function Valuation.GetSnapshot()
         end
     end
 
+    -- Optional: order categories by descending value so the biggest holdings
+    -- float to the top. Stable tie-break on name keeps the order deterministic.
+    if sortByValue then
+        table.sort(categories, function(a, b)
+            if a.gold ~= b.gold then
+                return a.gold > b.gold
+            end
+            return a.name < b.name
+        end)
+    end
+
+    local sourceName, sourceHasOthers = GetDominantSource()
+
     return {
         gold = grandGold,
         slots = grandSlots,
         stacks = ItemsToStacks(grandItems),
         items = grandItems,
         unpricedSlots = grandUnpricedSlots,
+        delta = deltaSinceLastVisit,
+        deltaMode = (private.savedVars and private.savedVars.deltaMode) or "visit",
+        sourceName = sourceName,
+        sourceHasOthers = sourceHasOthers,
         lastScanTimeMs = lastScanTimeMs,
         categories = categories,
     }

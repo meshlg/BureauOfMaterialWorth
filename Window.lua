@@ -7,6 +7,7 @@ local private = addon.private
 local GetString = GetString
 local stringformat = string.format
 local zo_round = zo_round
+local mathabs = math.abs
 
 -- Palette (shared with the rest of the Bureau house style)
 -- ---------------------------------------------------------------------------
@@ -15,6 +16,8 @@ local COLOR_MUTED    = "8C8A82"  -- dim grey: subtitle + footer
 local COLOR_NAME     = "DBD9D0"  -- near-white: category names
 local COLOR_GOLD     = "F4D03F"  -- soft gold: gold figures
 local COLOR_WARN     = "D0905E"  -- amber: "missing price" hint
+local COLOR_GAIN     = "8FCB9F"  -- green: positive since-last-visit delta
+local COLOR_LOSS     = "D08A8A"  -- soft red: negative since-last-visit delta
 
 -- Layout constants
 -- ---------------------------------------------------------------------------
@@ -22,7 +25,15 @@ local COLOR_WARN     = "D0905E"  -- amber: "missing price" hint
 -- a title, a prominent grand total, a subtitle, a divider, one row per non-empty
 -- category, another divider, then a two-line footer. Category rows are two
 -- columns (name left, gold right) so the figures line up.
-local WINDOW_WIDTH   = 320
+--
+-- The width is user-configurable (see Settings); DEFAULT_WINDOW_WIDTH is the
+-- fallback when no value is saved, and MIN/MAX/STEP bound the slider. Every
+-- width-dependent control reads CurrentWidth() so a width change can be
+-- re-applied at runtime without recreating controls.
+local DEFAULT_WINDOW_WIDTH = 400
+local MIN_WINDOW_WIDTH = 400
+local MAX_WINDOW_WIDTH = 600
+local WINDOW_WIDTH_STEP = 10
 local PADDING        = 12
 local TITLE_HEIGHT   = 22
 local TOTAL_HEIGHT   = 30
@@ -32,6 +43,13 @@ local DIVIDER_GAP    = 10   -- vertical space a divider occupies
 local FOOTER_LINE    = 16
 local SECTION_GAP    = 6    -- small gap between blocks
 local BG_ALPHA       = 0.82
+local EDGE_ALPHA     = 0.9  -- border opacity when the border is shown
+
+-- Expose the width bounds so the settings slider stays in sync with the layout.
+Window.DEFAULT_WIDTH = DEFAULT_WINDOW_WIDTH
+Window.MIN_WIDTH = MIN_WINDOW_WIDTH
+Window.MAX_WIDTH = MAX_WINDOW_WIDTH
+Window.WIDTH_STEP = WINDOW_WIDTH_STEP
 
 local GOLD_ICON = "|t16:16:EsoUI/Art/currency/currency_gold.dds|t"
 
@@ -68,13 +86,15 @@ end
 
 -- Runtime control references, created once in Initialize().
 local windowControl   -- top-level container
+local backdrop        -- background + border fill (toggled by appearance settings)
 local titleLabel      -- "Craft Bag Worth"
 local totalLabel      -- prominent grand-total gold figure
 local subtitleLabel   -- "<n> slots · <n> stacks · <n> items"
 local dividerTop      -- line under the header block
 local dividerBottom   -- line above the footer
 local footerUpdated   -- "Updated <ago>"
-local footerPrices    -- price-availability note
+local footerPrices    -- price-availability note (+ dominant source)
+local footerDelta     -- "since last visit" gold change
 local rowPool         -- reusable category rows { container, name, gold, data }
 
 -- Footer "updated X ago" should feel live even when nothing else changes, so a
@@ -89,10 +109,23 @@ local function GetSavedVars()
     return private.savedVars or {}
 end
 
+-- The configured window width, clamped to the supported range and snapped to the
+-- slider step, with a safe fallback when nothing is saved yet. Every
+-- width-dependent control reads this so a settings change re-flows consistently.
+local function CurrentWidth()
+    local width = GetSavedVars().windowWidth or DEFAULT_WINDOW_WIDTH
+    if width < MIN_WINDOW_WIDTH then
+        width = MIN_WINDOW_WIDTH
+    elseif width > MAX_WINDOW_WIDTH then
+        width = MAX_WINDOW_WIDTH
+    end
+    return width
+end
+
 local function CreateDivider(name)
     local divider = WINDOW_MANAGER:CreateControl(name, windowControl, CT_TEXTURE)
     divider:SetTexture("EsoUI/Art/Miscellaneous/horizontalDivider.dds")
-    divider:SetWidth(WINDOW_WIDTH - PADDING * 2)
+    divider:SetWidth(CurrentWidth() - PADDING * 2)
     divider:SetHeight(4)
     divider:SetColor(1, 1, 1, 0.4)
     return divider
@@ -110,7 +143,7 @@ local function AcquireRow(index)
 
     local container = WINDOW_MANAGER:CreateControl(
         addon.name .. "_Row" .. index, windowControl, CT_CONTROL)
-    container:SetWidth(WINDOW_WIDTH - PADDING * 2)
+    container:SetWidth(CurrentWidth() - PADDING * 2)
     container:SetHeight(ROW_HEIGHT)
     container:SetMouseEnabled(true)
 
@@ -119,14 +152,14 @@ local function AcquireRow(index)
     nameLabel:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
     nameLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     nameLabel:SetAnchor(LEFT, container, LEFT, 0, 0)
-    nameLabel:SetWidth(WINDOW_WIDTH * 0.5)
+    nameLabel:SetWidth(CurrentWidth() * 0.5)
 
     local goldLabel = WINDOW_MANAGER:CreateControl(nil, container, CT_LABEL)
     goldLabel:SetFont("ZoFontGame")
     goldLabel:SetHorizontalAlignment(TEXT_ALIGN_RIGHT)
     goldLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     goldLabel:SetAnchor(RIGHT, container, RIGHT, 0, 0)
-    goldLabel:SetWidth(WINDOW_WIDTH * 0.5 - PADDING)
+    goldLabel:SetWidth(CurrentWidth() * 0.5 - PADDING)
 
     local row = { container = container, name = nameLabel, gold = goldLabel }
 
@@ -171,20 +204,19 @@ function Window.Initialize()
 
     windowControl = WINDOW_MANAGER:CreateTopLevelWindow(addon.name .. "_Window")
     windowControl:SetClampedToScreen(true)
-    windowControl:SetDimensions(WINDOW_WIDTH, 120)
+    windowControl:SetDimensions(CurrentWidth(), 120)
     windowControl:SetHidden(true)
     windowControl:SetMouseEnabled(true)  -- so category rows can receive hover
 
     local sv = GetSavedVars()
     windowControl:SetAnchor(TOPRIGHT, ZO_CraftBag, TOPLEFT,
-        sv.windowOffsetX or -10, sv.windowOffsetY or 0)
+        sv.windowOffsetX or -25, sv.windowOffsetY or 0)
 
-    local backdrop = WINDOW_MANAGER:CreateControl(addon.name .. "_Backdrop", windowControl, CT_BACKDROP)
+    backdrop = WINDOW_MANAGER:CreateControl(addon.name .. "_Backdrop", windowControl, CT_BACKDROP)
     backdrop:SetAnchorFill(windowControl)
-    backdrop:SetCenterColor(0.05, 0.05, 0.06, BG_ALPHA)
-    backdrop:SetEdgeColor(0.42, 0.40, 0.34, 0.9)
     backdrop:SetEdgeTexture("", 1, 1, 1)
     backdrop:SetInsets(2, 2, -2, -2)
+    Window.ApplyAppearance()
 
     titleLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_Title", windowControl, CT_LABEL)
     titleLabel:SetFont("ZoFontWinH4")
@@ -212,6 +244,10 @@ function Window.Initialize()
     footerPrices = WINDOW_MANAGER:CreateControl(addon.name .. "_FooterPrices", windowControl, CT_LABEL)
     footerPrices:SetFont("ZoFontGameSmall")
     footerPrices:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
+
+    footerDelta = WINDOW_MANAGER:CreateControl(addon.name .. "_FooterDelta", windowControl, CT_LABEL)
+    footerDelta:SetFont("ZoFontGameSmall")
+    footerDelta:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
 end
 
 -- Render just the footer text from the cached snapshot. Split out so the
@@ -225,12 +261,59 @@ local function RenderFooter()
     footerUpdated:SetText(Colorize(COLOR_MUTED,
         stringformat(GetString(SI_BMW_FOOTER_UPDATED), FormatTimeAgo(lastSnapshot.lastScanTimeMs))))
 
-    if lastSnapshot.unpricedSlots > 0 then
-        footerPrices:SetText(Colorize(COLOR_WARN,
-            stringformat(GetString(SI_BMW_FOOTER_SOME_UNPRICED),
-                lastSnapshot.unpricedSlots, lastSnapshot.slots)))
+    -- Price-coverage line, always suffixed with the dominant source when one is
+    -- known ("... · Master Merchant"), so the figures stay attributable even
+    -- when some slots are unpriced (the common case -- style mats etc. rarely
+    -- have a price). The one exception is the low-coverage warning: when more
+    -- than half the slots are unpriced the total is unreliable, so we keep that
+    -- line loud and drop the source as noise.
+    local slots = lastSnapshot.slots or 0
+    local unpriced = lastSnapshot.unpricedSlots or 0
+
+    local function WithSource(text)
+        if lastSnapshot.sourceName then
+            local source = stringformat(GetString(SI_BMW_FOOTER_PRICES_FROM), lastSnapshot.sourceName)
+            if lastSnapshot.sourceHasOthers then
+                source = source .. " " .. GetString(SI_BMW_FOOTER_PRICES_OTHERS)
+            end
+            return text .. " · " .. source
+        end
+        return text
+    end
+
+    if unpriced > 0 then
+        local lowCoverage = slots > 0 and (unpriced * 2 > slots)
+        if lowCoverage then
+            footerPrices:SetText(Colorize(COLOR_WARN,
+                stringformat(GetString(SI_BMW_FOOTER_LOW_COVERAGE), unpriced, slots)))
+        else
+            footerPrices:SetText(
+                Colorize(COLOR_WARN, stringformat(GetString(SI_BMW_FOOTER_SOME_UNPRICED), unpriced, slots))
+                .. Colorize(COLOR_MUTED, WithSource("")))
+        end
+    elseif lastSnapshot.sourceName then
+        footerPrices:SetText(Colorize(COLOR_MUTED,
+            WithSource(GetString(SI_BMW_FOOTER_ALL_PRICED))))
     else
         footerPrices:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_FOOTER_ALL_PRICED)))
+    end
+
+    -- Value-change delta. Hidden when there is no baseline yet or the total is
+    -- unchanged, so the line only appears when it says something. The label
+    -- depends on the configured baseline mode (per-visit vs per-session).
+    local delta = lastSnapshot.delta
+    if delta and delta ~= 0 then
+        local color = delta > 0 and COLOR_GAIN or COLOR_LOSS
+        local sign = delta > 0 and "+" or "-"
+        local magnitude = ZO_LocalizeDecimalNumber(zo_round(mathabs(delta)))
+        local labelKey = lastSnapshot.deltaMode == "session"
+            and SI_BMW_FOOTER_DELTA_SESSION or SI_BMW_FOOTER_DELTA
+        footerDelta:SetHidden(false)
+        footerDelta:SetText(Colorize(color,
+            stringformat(GetString(labelKey), sign .. magnitude)))
+    else
+        footerDelta:SetHidden(true)
+        footerDelta:SetText("")
     end
 end
 
@@ -249,7 +332,7 @@ function Window.Update()
     end
 
     local sv = GetSavedVars()
-    local snapshot = valuation.GetSnapshot()
+    local snapshot = valuation.GetSnapshot(sv.sortByValue == true)
     lastSnapshot = snapshot
 
     -- Header block: prominent total + subtitle counts.
@@ -280,11 +363,21 @@ function Window.Update()
     local showBreakdown = sv.showCategoryBreakdown ~= false
     if showBreakdown then
         local rows = snapshot.categories
+        local grandTotal = snapshot.gold
         for i = 1, #rows do
             local data = rows[i]
             local row = AcquireRow(i)
             row.data = data
-            row.name:SetText(Colorize(COLOR_NAME, data.name))
+            -- Name + the category's share of the grand total, so it reads
+            -- "Blacksmithing 42%" at a glance. Guard against a zero total (an
+            -- all-unpriced bag) so the share is simply omitted rather than NaN.
+            local nameText = Colorize(COLOR_NAME, data.name)
+            if grandTotal and grandTotal > 0 then
+                local percent = zo_round(data.gold / grandTotal * 100)
+                nameText = nameText .. " " .. Colorize(COLOR_MUTED,
+                    stringformat(GetString(SI_BMW_ROW_PERCENT), percent))
+            end
+            row.name:SetText(nameText)
             -- Flag categories that have unpriced slots with a subtle marker so
             -- the total reads honestly at a glance, detail is in the tooltip.
             local goldText = FormatGold(data.gold)
@@ -325,6 +418,16 @@ function Window.Update()
     footerPrices:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, y)
     y = y + FOOTER_LINE
 
+    -- Optional since-last-visit delta line. Only reserves vertical space when it
+    -- will actually be shown (a known, non-zero delta), so the panel doesn't grow
+    -- an empty gap on the first visit.
+    footerDelta:ClearAnchors()
+    footerDelta:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, y)
+    local delta = snapshot.delta
+    if delta and delta ~= 0 then
+        y = y + FOOTER_LINE
+    end
+
     RenderFooter()
 
     windowControl:SetHeight(y + PADDING)
@@ -364,6 +467,63 @@ function Window.ApplyAnchor()
     local sv = GetSavedVars()
     windowControl:ClearAnchors()
     windowControl:SetAnchor(TOPRIGHT, ZO_CraftBag, TOPLEFT,
-        sv.windowOffsetX or -10, sv.windowOffsetY or 0)
+        sv.windowOffsetX or -25, sv.windowOffsetY or 0)
+end
+
+-- Re-apply the configured width to the window and every width-dependent control
+-- (dividers + pooled rows and their two columns), then re-lay-out. Called when
+-- the width slider changes; safe before Initialize (no-op) and when rows have
+-- not been created yet.
+function Window.ApplyWidth()
+    if not windowControl then
+        return
+    end
+
+    local width = CurrentWidth()
+    windowControl:SetWidth(width)
+
+    local innerWidth = width - PADDING * 2
+    if dividerTop then
+        dividerTop:SetWidth(innerWidth)
+    end
+    if dividerBottom then
+        dividerBottom:SetWidth(innerWidth)
+    end
+
+    if rowPool then
+        for i = 1, #rowPool do
+            local row = rowPool[i]
+            row.container:SetWidth(innerWidth)
+            row.name:SetWidth(width * 0.5)
+            row.gold:SetWidth(width * 0.5 - PADDING)
+        end
+    end
+
+    Window.Update()
+end
+
+-- Re-apply the configured background/border appearance. When the background is
+-- off the center color is fully transparent; when the border is off the edge
+-- color is too, so the panel can be reduced to plain floating text.
+function Window.ApplyAppearance()
+    if not backdrop then
+        return
+    end
+
+    local sv = GetSavedVars()
+    local showBackground = sv.showBackground ~= false
+    local showBorder = sv.showBorder ~= false
+
+    if showBackground then
+        backdrop:SetCenterColor(0.05, 0.05, 0.06, BG_ALPHA)
+    else
+        backdrop:SetCenterColor(0, 0, 0, 0)
+    end
+
+    if showBorder then
+        backdrop:SetEdgeColor(0.42, 0.40, 0.34, EDGE_ALPHA)
+    else
+        backdrop:SetEdgeColor(0, 0, 0, 0)
+    end
 end
 

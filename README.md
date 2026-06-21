@@ -44,7 +44,9 @@ of this actually worth?".
 - A **prominent grand total** with a subtitle showing total slots, stacks, and
   items.
 - A **per-profession breakdown** beneath it, which you can turn off to show just
-  the total.
+  the total. Each row shows the category's **share of the grand total** (e.g.
+  "Blacksmithing 42%"), and you can **sort rows by value** so your biggest
+  holdings float to the top.
 - **Hover tooltips** on each category reveal its value, slot count (distinct
   materials), stack count (in classic 200-item stacks), item count, and how many
   of its slots have no price.
@@ -54,19 +56,37 @@ of this actually worth?".
 ### Honest about its data
 - A footer line shows **when the value was last computed** ("just now", "5m ago",
   …), refreshed live while the bag is open.
-- A second footer line reports **price coverage**: either "all slots priced" or
-  how many slots LibPrice has no data for. Categories with gaps are flagged with
-  a subtle marker, so the total never silently pretends to be complete.
+- A second footer line reports **price coverage** and the **price source** it
+  drew from (e.g. "All slots priced · Prices: Master Merchant"). When some slots
+  have no price it says how many; when **more than half** are unpriced it escalates
+  to a loud "total unreliable" warning, so the figure never silently pretends to
+  be complete.
+- A **value-change delta** (▲/▼) shows how your Craft Bag's value changed — its
+  "gold since last visit" / "gold this session" — see the note below for exactly
+  what it counts.
 - `/bmw refresh` re-queries prices — handy after Master Merchant or Tamriel Trade
   Centre finishes importing fresh data.
+
+> **How the value-change delta works.** Craft Bag market prices do **not** update
+> live — a price source (Master Merchant / TTC / ATT) only refreshes its data
+> across a game restart and reimport. So the delta deliberately counts **only
+> changes to your actual stock**: it appears when your total *item count* changed
+> since the baseline (you deposited or withdrew materials), and is **hidden when
+> only prices drifted**. That way a restart-and-reimport that merely re-values
+> the same materials won't show a misleading "+2M". You choose the baseline in
+> settings: **Each visit** compares against the previous time you opened the bag
+> (persists across restarts), while **Each session** compares against the first
+> open after login/`/reloadui`, so the change accumulates until you log out. On
+> the first open with no baseline yet, and when nothing changed, no delta is shown.
 
 ### Lives with the Craft Bag
 - The panel is anchored to the Craft Bag and is only on screen while the bag is
   open. The configurable horizontal/vertical offset lets you nudge it to taste.
 
 ### Settings & localization
-- A clean **LibAddonMenu** panel: toggle the category breakdown, adjust the
-  panel offset, set chat-debug verbosity, and force a price refresh.
+- A clean **LibAddonMenu** panel: toggle the category breakdown and value
+  sorting, show/hide the background and border, set the panel width and offset,
+  choose chat-debug verbosity, and force a price refresh.
 - Full **English and Russian** localization.
 - Slash commands for everything (see below).
 

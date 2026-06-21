@@ -10,6 +10,18 @@ local strings = {
 
     SI_BMW_SETTING_CATEGORY_BREAKDOWN_NAME = "Show category breakdown",
     SI_BMW_SETTING_CATEGORY_BREAKDOWN_TOOLTIP = "Show per-profession subtotals (Blacksmithing, Alchemy, Provisioning, and so on) beneath the grand total. When off, only the grand total is shown.",
+    SI_BMW_SETTING_SORT_BY_VALUE_NAME = "Sort categories by value",
+    SI_BMW_SETTING_SORT_BY_VALUE_TOOLTIP = "Order the category rows by descending gold value, so your most valuable holdings are always on top. When off, they follow the fixed profession order.",
+    SI_BMW_SETTING_DELTA_MODE_NAME = "\"Since last visit\" baseline",
+    SI_BMW_SETTING_DELTA_MODE_TOOLTIP = "What the footer's value-change line compares against. \"Each visit\": the previous time you opened the Craft Bag (persists across restarts). \"Each session\": the first time you opened it after logging in or reloading the UI, so the change accumulates until you log out or /reloadui. In both modes a pure price change (same materials, refreshed prices) shows no delta.",
+    SI_BMW_SETTING_DELTA_MODE_VISIT = "Each visit",
+    SI_BMW_SETTING_DELTA_MODE_SESSION = "Each session",
+    SI_BMW_SETTING_BACKGROUND_NAME = "Show background",
+    SI_BMW_SETTING_BACKGROUND_TOOLTIP = "Draw the dark panel background behind the text. Turn off for plain floating text over the Craft Bag.",
+    SI_BMW_SETTING_BORDER_NAME = "Show border",
+    SI_BMW_SETTING_BORDER_TOOLTIP = "Draw the panel's border edge. Turn off for a cleaner, frameless look.",
+    SI_BMW_SETTING_WIDTH_NAME = "Window width",
+    SI_BMW_SETTING_WIDTH_TOOLTIP = "Width of the value panel in pixels. Increase it if long category names or large gold figures look cramped.",
     SI_BMW_SETTING_OFFSET_X_NAME = "Horizontal offset",
     SI_BMW_SETTING_OFFSET_X_TOOLTIP = "Fine-tune the window's horizontal position relative to the Craft Bag panel.",
     SI_BMW_SETTING_OFFSET_Y_NAME = "Vertical offset",
@@ -25,6 +37,8 @@ local strings = {
     -- %s = total item count.
     SI_BMW_WINDOW_SUBTITLE = "%d slots · %s stacks · %s items",
     SI_BMW_WINDOW_EMPTY = "Craft Bag is empty",
+    -- Category row: the category's share of the grand total. %d = percent.
+    SI_BMW_ROW_PERCENT = "%d%%",
 
     -- Window: per-category hover tooltip
     SI_BMW_TOOLTIP_VALUE = "Value: %s gold",
@@ -37,6 +51,11 @@ local strings = {
     SI_BMW_FOOTER_UPDATED = "Updated %s",
     SI_BMW_FOOTER_ALL_PRICED = "All slots priced",
     SI_BMW_FOOTER_SOME_UNPRICED = "%d of %d slots have no price data",
+    SI_BMW_FOOTER_LOW_COVERAGE = "Total unreliable: %d of %d slots unpriced",
+    SI_BMW_FOOTER_PRICES_FROM = "Prices: %s",
+    SI_BMW_FOOTER_PRICES_OTHERS = "(+others)",
+    SI_BMW_FOOTER_DELTA = "%s gold since last visit",
+    SI_BMW_FOOTER_DELTA_SESSION = "%s gold this session",
 
     -- Window: relative time
     SI_BMW_TIME_NEVER = "never",

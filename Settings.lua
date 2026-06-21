@@ -11,11 +11,23 @@ local tonumber = tonumber
 -- no gameplay-affecting state, only presentation/diagnostics.
 --   debugMode             chat verbosity (mirrors the core's debugMode contract)
 --   showCategoryBreakdown show per-profession subtotals under the grand total
+--   sortByValue           order category rows by descending value (vs profession order)
+--   deltaMode             "since last visit" baseline: "visit" (per open) or "session" (until reloadui/logout)
+--   showBackground        draw the panel's dark background fill
+--   showBorder            draw the panel's border edge
+--   windowWidth           panel width in px (see Window MIN/MAX/STEP bounds)
 --   windowOffsetX/Y       fine-tune the window position relative to ZO_CraftBag
+--   lastVisitGold         grand total saved on last bag close, for the "since last visit" delta
+--   lastVisitItems        total item count saved alongside it, to gate the delta on real stock changes
 local DEFAULT_SAVED_VARS = {
     debugMode = 1,
     showCategoryBreakdown = true,
-    windowOffsetX = -10,
+    sortByValue = false,
+    deltaMode = "visit",
+    showBackground = true,
+    showBorder = false,
+    windowWidth = 400,
+    windowOffsetX = -25,
     windowOffsetY = 0,
 }
 
@@ -127,13 +139,88 @@ function Settings.RegisterSettingsPanel()
             width = "full",
         },
         {
+            type = "checkbox",
+            name = GetString(SI_BMW_SETTING_SORT_BY_VALUE_NAME),
+            tooltip = GetString(SI_BMW_SETTING_SORT_BY_VALUE_TOOLTIP),
+            getFunc = function() return GetSavedVarsOrDefaults().sortByValue == true end,
+            setFunc = function(value)
+                private.savedVars.sortByValue = value
+                if addon.Window then
+                    addon.Window.Update()
+                end
+            end,
+            default = DEFAULT_SAVED_VARS.sortByValue,
+            width = "full",
+        },
+        {
+            type = "dropdown",
+            name = GetString(SI_BMW_SETTING_DELTA_MODE_NAME),
+            tooltip = GetString(SI_BMW_SETTING_DELTA_MODE_TOOLTIP),
+            choices = { GetString(SI_BMW_SETTING_DELTA_MODE_VISIT), GetString(SI_BMW_SETTING_DELTA_MODE_SESSION) },
+            choicesValues = { "visit", "session" },
+            getFunc = function() return GetSavedVarsOrDefaults().deltaMode or DEFAULT_SAVED_VARS.deltaMode end,
+            setFunc = function(value)
+                private.savedVars.deltaMode = value
+                if addon.Window then
+                    addon.Window.Update()
+                end
+            end,
+            default = DEFAULT_SAVED_VARS.deltaMode,
+            width = "full",
+        },
+        {
+            type = "checkbox",
+            name = GetString(SI_BMW_SETTING_BACKGROUND_NAME),
+            tooltip = GetString(SI_BMW_SETTING_BACKGROUND_TOOLTIP),
+            getFunc = function() return GetSavedVarsOrDefaults().showBackground ~= false end,
+            setFunc = function(value)
+                private.savedVars.showBackground = value
+                if addon.Window then
+                    addon.Window.ApplyAppearance()
+                end
+            end,
+            default = DEFAULT_SAVED_VARS.showBackground,
+            width = "full",
+        },
+        {
+            type = "checkbox",
+            name = GetString(SI_BMW_SETTING_BORDER_NAME),
+            tooltip = GetString(SI_BMW_SETTING_BORDER_TOOLTIP),
+            getFunc = function() return GetSavedVarsOrDefaults().showBorder ~= false end,
+            setFunc = function(value)
+                private.savedVars.showBorder = value
+                if addon.Window then
+                    addon.Window.ApplyAppearance()
+                end
+            end,
+            default = DEFAULT_SAVED_VARS.showBorder,
+            width = "full",
+        },
+        {
+            type = "slider",
+            name = GetString(SI_BMW_SETTING_WIDTH_NAME),
+            tooltip = GetString(SI_BMW_SETTING_WIDTH_TOOLTIP),
+            min = addon.Window and addon.Window.MIN_WIDTH or 400,
+            max = addon.Window and addon.Window.MAX_WIDTH or 600,
+            step = addon.Window and addon.Window.WIDTH_STEP or 10,
+            getFunc = function() return GetSavedVarsOrDefaults().windowWidth or DEFAULT_SAVED_VARS.windowWidth end,
+            setFunc = function(value)
+                private.savedVars.windowWidth = value
+                if addon.Window then
+                    addon.Window.ApplyWidth()
+                end
+            end,
+            default = DEFAULT_SAVED_VARS.windowWidth,
+            width = "full",
+        },
+        {
             type = "slider",
             name = GetString(SI_BMW_SETTING_OFFSET_X_NAME),
             tooltip = GetString(SI_BMW_SETTING_OFFSET_X_TOOLTIP),
             min = -400,
             max = 400,
             step = 5,
-            getFunc = function() return GetSavedVarsOrDefaults().windowOffsetX or -10 end,
+            getFunc = function() return GetSavedVarsOrDefaults().windowOffsetX or -25 end,
             setFunc = function(value)
                 private.savedVars.windowOffsetX = value
                 if addon.Window then
