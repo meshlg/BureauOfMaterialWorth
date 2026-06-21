@@ -51,6 +51,17 @@ local strings = {
     [SI_BMW_TOOLTIP_STACKS] = "Стаков по 200: %s",
     [SI_BMW_TOOLTIP_ITEMS] = "Предметов: %s",
     [SI_BMW_TOOLTIP_UNPRICED] = "Без цены: %d ячеек",
+    [SI_BMW_TOOLTIP_CLICK_HINT] = "Нажмите для полного списка материалов",
+
+    -- Detail window: per-category material table (opened by clicking a row)
+    [SI_BMW_DETAIL_TITLE] = "%s — материалы",
+    [SI_BMW_DETAIL_COL_NAME] = "Материал",
+    [SI_BMW_DETAIL_COL_QTY] = "Кол-во",
+    [SI_BMW_DETAIL_COL_VALUE] = "Стоимость",
+    [SI_BMW_DETAIL_COL_CHANGE] = "Изменение",
+    [SI_BMW_DETAIL_GROWTH] = "%s%%",
+    [SI_BMW_DETAIL_GROWTH_NEW] = "—",
+    [SI_BMW_DETAIL_EMPTY] = "В этой категории нет материалов.",
 
     -- Window: footer (two-column label -> value rows)
     [SI_BMW_FOOTER_UPDATED_LABEL] = "Обновлено",

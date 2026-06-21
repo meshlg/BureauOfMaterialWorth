@@ -50,6 +50,20 @@ local strings = {
     SI_BMW_TOOLTIP_STACKS = "Stacks of 200: %s",
     SI_BMW_TOOLTIP_ITEMS = "Items: %s",
     SI_BMW_TOOLTIP_UNPRICED = "Without price: %d slots",
+    SI_BMW_TOOLTIP_CLICK_HINT = "Click for the full material list",
+
+    -- Detail window: per-category material table (opened by clicking a row)
+    SI_BMW_DETAIL_TITLE = "%s — materials",
+    SI_BMW_DETAIL_COL_NAME = "Material",
+    SI_BMW_DETAIL_COL_QTY = "Qty",
+    SI_BMW_DETAIL_COL_VALUE = "Value",
+    SI_BMW_DETAIL_COL_CHANGE = "Change",
+    -- Price-change magnitude; the sign is carried by an up/down arrow + color.
+    -- %s = the percentage (one decimal place).
+    SI_BMW_DETAIL_GROWTH = "%s%%",
+    -- Shown when a material has no recorded price baseline yet, or no price.
+    SI_BMW_DETAIL_GROWTH_NEW = "—",
+    SI_BMW_DETAIL_EMPTY = "No materials in this category.",
 
     -- Window: footer (two-column label -> value rows)
     SI_BMW_FOOTER_UPDATED_LABEL = "Updated",

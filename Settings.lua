@@ -21,6 +21,7 @@ local tonumber = tonumber
 --   windowOffsetX/Y       fine-tune the window position relative to ZO_CraftBag
 --   lastVisitGold         grand total saved on last bag close, for the "since last visit" delta
 --   lastVisitItems        total item count saved alongside it, to gate the delta on real stock changes
+--   priceHistory          [itemId] = { p = unit price, t = unix timestamp }; baseline for the detail window's price-change column
 local DEFAULT_SAVED_VARS = {
     debugMode = 1,
     showCategoryBreakdown = true,
@@ -33,6 +34,7 @@ local DEFAULT_SAVED_VARS = {
     windowWidth = 400,
     windowOffsetX = -25,
     windowOffsetY = 0,
+    priceHistory = {},
 }
 
 local function GetSavedVarsOrDefaults()

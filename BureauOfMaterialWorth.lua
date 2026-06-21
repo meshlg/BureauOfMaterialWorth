@@ -5,7 +5,7 @@ local SAVED_VARIABLES_NAME = "BureauOfMaterialWorth_SavedVariables"
 BureauOfMaterialWorth = {
     name = ADDON_NAME,
     savedVariablesName = SAVED_VARIABLES_NAME,
-    version = "1.0.21062240",
+    version = "1.1.22060055",
     debugMode = 1,  -- 0=off, 1=errors, 2=warnings, 3=info, 4=verbose
 }
 
@@ -153,6 +153,10 @@ local function GetWindowModule()
     return BureauOfMaterialWorth.Window
 end
 
+local function GetDetailWindowModule()
+    return BureauOfMaterialWorth.DetailWindow
+end
+
 -- Craft-bag visibility wiring
 -- ---------------------------------------------------------------------------
 -- The window is only meaningful while the craft bag is on screen, and -- per
@@ -181,6 +185,10 @@ local function OnCraftBagFragmentStateChange(oldState, newState)
         if window then
             window.Hide()
         end
+        local detail = GetDetailWindowModule()
+        if detail then
+            detail.OnCraftBagHidden()
+        end
     end
 end
 
@@ -208,6 +216,9 @@ local function OnAddonLoaded(event, addonName)
     -- Build the window and the valuation engine now that SavedVariables exist.
     if GetWindowModule() then
         GetWindowModule().Initialize()
+    end
+    if GetDetailWindowModule() then
+        GetDetailWindowModule().Initialize()
     end
     if GetValuationModule() then
         GetValuationModule().Initialize()

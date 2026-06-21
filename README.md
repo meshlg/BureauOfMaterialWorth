@@ -21,7 +21,8 @@ Open your Craft Bag and a slim panel appears beside it: a prominent **grand
 total** in gold at the top, a subtitle with the slot, stack, and item counts, then
 a **per-profession breakdown** (Blacksmithing, Clothier, Woodworking, Jewelry,
 Alchemy, Enchanting, Provisioning, and an "Other" bucket). Hover any category for
-its value, slot count, stack count, item count, and how many slots have no price. A
+its value, slot count, stack count, item count, and how many slots have no price —
+or **click a category** to open a scrollable table of every material in it. A
 footer shows **how long ago** the figures were computed and whether **every slot
 has a price**. As you deposit or withdraw materials the total updates on its own.
 That's the whole addon — no gameplay changes, just an answer to "how much is all
@@ -53,6 +54,21 @@ of this actually worth?".
 - Values are formatted with thousands separators and the gold icon, and can be
   **tinted by magnitude** (a subtle dim-to-bright gold scale) so the largest
   figures stand out. Both the icons and the color scale can be toggled off.
+
+### Per-category material table
+- **Click any category row** to open a separate, scrollable window listing *every
+  individual material* in that profession — handy for "Other", which can hold
+  hundreds of distinct materials.
+- Each row shows the material's **icon**, its **name** (tinted by quality), the
+  **quantity** you hold, and its **total value**. Rows are sorted alphabetically
+  by name.
+- A **price-change column** (▲/▼ with a percentage) shows how each material's
+  price has moved since it was last recorded. The addon keeps its own price
+  history for this — a material shows "—" the first time you view it, then a real
+  change once a baseline exists. The baseline advances roughly once a day, so the
+  figure reflects day-over-day market drift rather than noise.
+- The window is **movable** and closes with the Craft Bag, so it never lingers
+  over the rest of your UI.
 
 ### Honest about its data
 - The footer is a compact two-column readout. **Updated** shows when the value
@@ -142,18 +158,21 @@ namespace, mirroring the structure of its sibling *Bureau of Acceptable Views*.
                  │
    BureauOfMaterialWorth.lua      Core: logging, chat, event wiring, slash command
                  │
-        ┌────────┴────────┐
-        ▼                 ▼
-    Valuation.lua      Window.lua
-  scan · price cache   the anchored panel
-  category aggregates  (reads totals only)
+        ┌────────┼─────────────┐
+        ▼        ▼             ▼
+  Valuation.lua  Window.lua  DetailWindow.lua
+  scan · prices  anchored    per-category
+  aggregates     panel       material table
 ```
 
 - **`Valuation.lua`** owns all scanning, the per-item price cache, the per-slot
-  contribution cache, and the running category/grand totals. It is the only
-  module that touches LibPrice or the Craft Bag contents.
+  contribution cache, the running category/grand totals, and the per-material
+  price history. It is the only module that touches LibPrice or the Craft Bag
+  contents.
 - **`Window.lua`** is pure presentation: it reads already-computed totals and
   lays out the panel. It never scans or prices anything.
+- **`DetailWindow.lua`** is the scrollable per-category material table, opened by
+  clicking a category row; it reads its rows from `Valuation.lua` on demand.
 - The **core** wires the Craft Bag fragment's visibility to the valuation and
   window, filters the inventory update event to the Craft Bag, and exposes the
   `/bmw` slash command via an O(1) dispatch table.
@@ -165,8 +184,9 @@ namespace, mirroring the structure of its sibling *Bureau of Acceptable Views*.
 | Module | Responsibility |
 | --- | --- |
 | `BureauOfMaterialWorth.lua` | Core: logging, chat, event wiring, Craft Bag visibility, slash commands. |
-| `Valuation.lua` | Craft Bag scan, LibPrice integration, price/slot caches, category aggregation. |
+| `Valuation.lua` | Craft Bag scan, LibPrice integration, price/slot caches, category aggregation, per-material price history. |
 | `Window.lua` | The panel anchored to the Craft Bag; renders the total and category rows. |
+| `DetailWindow.lua` | The scrollable per-category material table opened by clicking a category row. |
 | `Settings.lua` | SavedVariables, defaults, and the LibAddonMenu panel. |
 
 ---

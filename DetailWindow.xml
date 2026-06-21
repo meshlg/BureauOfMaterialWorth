@@ -1,0 +1,53 @@
+<GuiXml>
+    <Controls>
+        <!--
+            Virtual controls for the per-category material detail window.
+
+            This is the addon's only XML: ESO's virtualized scroll list
+            (ZO_ScrollList) recycles a small set of row controls instantiated
+            from an XML template via CreateControlFromVirtual, so the row
+            template MUST be defined here rather than in code. The window frame,
+            title, headers and divider are still built in code (DetailWindow.lua)
+            to match the rest of the addon.
+
+            Column layout (left -> right), mirrored by the header labels built in
+            code so they line up:
+              Icon   28px  fixed, left
+              Name   flexible (fills the gap between Icon and Qty)
+              Qty    70px  right-aligned, anchored left of Value
+              Value  150px right-aligned, anchored left of Change
+              Change 90px  right-aligned, at the row's right edge
+        -->
+        <Control name="BureauOfMaterialWorth_DetailList" inherits="ZO_ScrollList" virtual="true" />
+
+        <Control name="BureauOfMaterialWorth_DetailRow" virtual="true" mouseEnabled="true">
+            <Dimensions y="26" />
+            <Controls>
+                <Texture name="$(parent)Icon">
+                    <Dimensions x="24" y="24" />
+                    <Anchor point="LEFT" relativeTo="$(parent)" relativePoint="LEFT" offsetX="2" />
+                </Texture>
+
+                <Label name="$(parent)Change" font="ZoFontGame" horizontalAlignment="RIGHT" verticalAlignment="CENTER">
+                    <Dimensions x="90" />
+                    <Anchor point="RIGHT" relativeTo="$(parent)" relativePoint="RIGHT" offsetX="-4" />
+                </Label>
+
+                <Label name="$(parent)Value" font="ZoFontGame" horizontalAlignment="RIGHT" verticalAlignment="CENTER">
+                    <Dimensions x="150" />
+                    <Anchor point="RIGHT" relativeTo="$(parent)Change" relativePoint="LEFT" offsetX="-6" />
+                </Label>
+
+                <Label name="$(parent)Qty" font="ZoFontGame" horizontalAlignment="RIGHT" verticalAlignment="CENTER">
+                    <Dimensions x="70" />
+                    <Anchor point="RIGHT" relativeTo="$(parent)Value" relativePoint="LEFT" offsetX="-6" />
+                </Label>
+
+                <Label name="$(parent)Name" font="ZoFontGame" horizontalAlignment="LEFT" verticalAlignment="CENTER">
+                    <Anchor point="LEFT" relativeTo="$(parent)Icon" relativePoint="RIGHT" offsetX="6" />
+                    <Anchor point="RIGHT" relativeTo="$(parent)Qty" relativePoint="LEFT" offsetX="-6" />
+                </Label>
+            </Controls>
+        </Control>
+    </Controls>
+</GuiXml>

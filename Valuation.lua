@@ -16,6 +16,17 @@ local GetItemLinkItemType       = GetItemLinkItemType
 local ZO_GetNextBagSlotIndex    = ZO_GetNextBagSlotIndex
 local LibPrice                  = LibPrice
 
+-- Display-field + price-history helpers, only touched lazily when the detail
+-- window is opened (never on the per-slot scan path), but bound here for
+-- consistency with the rest of the module.
+local GetItemLinkName             = GetItemLinkName
+local GetItemLinkIcon             = GetItemLinkIcon
+local GetItemLinkFunctionalQuality = GetItemLinkFunctionalQuality
+local GetItemQualityColor         = GetItemQualityColor
+local GetTimeStamp                = GetTimeStamp
+local zo_round                    = zo_round
+local tablesort                   = table.sort
+
 local BAG = BAG_VIRTUAL
 
 -- A "classic" inventory stack is 200 identical items. The craft bag itself has
@@ -26,6 +37,18 @@ local BAG = BAG_VIRTUAL
 -- The slot count is what the incremental aggregates track; the stack count is
 -- derived from the item total at snapshot time (see GetSnapshot).
 local STACK_SIZE = 200
+
+-- Price-history bookkeeping for the detail window's "price change" column.
+-- ---------------------------------------------------------------------------
+-- We keep one baseline price per itemId in savedVars and compare the current
+-- price against it to show a growth %. RECORD_INTERVAL_SECONDS gates how often
+-- the baseline advances: recording on every view would make the delta read ~0%
+-- forever (you'd be comparing a price against itself seconds later), so the
+-- baseline only moves once roughly a day has passed -- the figure then reflects
+-- day-over-day market drift. PRUNE_MAX_AGE_SECONDS drops baselines for
+-- materials the user hasn't viewed in a month so the table can't grow forever.
+local RECORD_INTERVAL_SECONDS = 20 * 60 * 60   -- ~20h
+local PRUNE_MAX_AGE_SECONDS   = 30 * 24 * 60 * 60  -- 30 days
 
 local zo_ceil = zo_ceil
 
@@ -285,6 +308,7 @@ local function ComputeSlot(slotIndex)
         stack = stack,
         priced = wasPriced,
         source = sourceKey,
+        itemId = itemId,
     }
 end
 
@@ -451,6 +475,9 @@ end
 function Valuation.Initialize()
     BuildItemTypeMap()
 
+    -- Drop stale price-history baselines accumulated across past sessions.
+    Valuation.PrunePriceHistory()
+
     -- Single-slot updates are the common case (deposit/withdraw one material);
     -- filter to the craft bag so we are never woken by backpack/bank churn.
     EVENT_MANAGER:RegisterForEvent(addon.name, EVENT_INVENTORY_SINGLE_SLOT_UPDATE, OnSingleSlotUpdate)
@@ -603,6 +630,130 @@ end
 
 function Valuation.GetStatus()
     return grandGold, grandSlots - grandUnpricedSlots, grandUnpricedSlots
+end
+
+-- Detail-window data + price history
+-- ---------------------------------------------------------------------------
+-- Everything below is touched ONLY when the user opens the per-category detail
+-- window (a click), never on the per-slot scan path. It resolves the heavier
+-- display fields (name/icon/quality) lazily from the item link and folds in a
+-- price-change figure from the persisted baseline.
+
+-- Read the persisted baseline for an itemId and, if it is stale (or missing),
+-- advance it to the current price. Returns growthPercent, growthDir (true =
+-- up/flat, false = down) and isNew (no prior baseline) for display. Read of the
+-- old value happens BEFORE the write so the very session that records a new
+-- baseline still shows the change against the previous one.
+local function ResolvePriceGrowth(itemId, curUnit)
+    local sv = private.savedVars
+    if not sv or not curUnit or curUnit <= 0 then
+        return nil, nil, false
+    end
+
+    local history = sv.priceHistory
+    if not history then
+        history = {}
+        sv.priceHistory = history
+    end
+
+    local now = GetTimeStamp()
+    local old = history[itemId]
+
+    local growthPercent, growthDir, isNew
+    if old and old.p and old.p > 0 then
+        growthPercent = (curUnit - old.p) / old.p * 100
+        growthDir = curUnit >= old.p
+        isNew = false
+    else
+        isNew = true
+    end
+
+    -- Advance the baseline only when there is none yet or the existing one has
+    -- aged past the record interval, so the displayed % reflects day-over-day
+    -- drift rather than "since I opened the bag moments ago".
+    if not old or not old.t or (now - old.t) >= RECORD_INTERVAL_SECONDS then
+        history[itemId] = { p = zo_round(curUnit), t = now }
+    end
+
+    return growthPercent, growthDir, isNew
+end
+
+-- Per-material rows for one category, built lazily on detail-window open. O(slots)
+-- to filter slotInfo plus a GetItemLink* resolve per matching slot; runs once per
+-- click, not on the scan path. Returns an array sorted alphabetically by name:
+--   { itemId, name, icon, quality, count, gold, unitPrice, priced,
+--     growthPercent, growthDir, isNew }
+-- Relies on craft-bag slots being valid, which holds because the detail window
+-- is only reachable from the panel, shown only while the craft bag is open.
+function Valuation.GetCategoryMaterials(categoryId)
+    local materials = {}
+
+    for slotIndex, info in pairs(slotInfo) do
+        if info.category == categoryId then
+            local itemLink = GetItemLink(BAG, slotIndex)
+            local quality = GetItemLinkFunctionalQuality(itemLink)
+            local unitPrice
+            if info.stack and info.stack > 0 then
+                unitPrice = info.value / info.stack
+            else
+                unitPrice = 0
+            end
+
+            local growthPercent, growthDir, isNew = ResolvePriceGrowth(info.itemId, info.priced and unitPrice or nil)
+
+            materials[#materials + 1] = {
+                itemId = info.itemId,
+                name = GetItemLinkName(itemLink),
+                icon = GetItemLinkIcon(itemLink),
+                quality = quality,
+                count = info.stack,
+                gold = info.value,
+                unitPrice = unitPrice,
+                priced = info.priced,
+                growthPercent = growthPercent,
+                growthDir = growthDir,
+                isNew = isNew,
+            }
+        end
+    end
+
+    tablesort(materials, function(a, b)
+        if a.name ~= b.name then
+            return a.name < b.name
+        end
+        return a.itemId < b.itemId
+    end)
+
+    return materials
+end
+
+-- Apply the quality color to a material name, mirroring how the game tints item
+-- names. Kept here (next to the data) so the window can render a plain string.
+function Valuation.ColorizeMaterialName(name, quality)
+    if not quality then
+        return name
+    end
+    local color = GetItemQualityColor(quality)
+    if not color then
+        return name
+    end
+    return color:Colorize(name)
+end
+
+-- Drop price-history baselines for materials not seen in PRUNE_MAX_AGE_SECONDS so
+-- the table cannot grow without bound. Called once on load.
+function Valuation.PrunePriceHistory()
+    local sv = private.savedVars
+    if not sv or not sv.priceHistory then
+        return
+    end
+
+    local now = GetTimeStamp()
+    for itemId, entry in pairs(sv.priceHistory) do
+        if not entry.t or (now - entry.t) >= PRUNE_MAX_AGE_SECONDS then
+            sv.priceHistory[itemId] = nil
+        end
+    end
 end
 
 private.GetValuationSnapshot = Valuation.GetSnapshot

@@ -1,9 +1,9 @@
-## Title: Bureau of Material Worth |c6FCB9Fv1.0.21062240|r
-## Version: 1.0.21062240
-## AddOnVersion: 1001
+## Title: Bureau of Material Worth |c6FCB9Fv1.1.22060055|r
+## Version: 1.1.22060055
+## AddOnVersion: 1100
 ## APIVersion: 101050
 ## Author: |c6FCB9Fmeshlg|r
-## Description: Sums the market value of your entire Craft Bag (via LibPrice: Master Merchant / Tamriel Trade Centre / Arkadius' Trade Tools) and shows the total with an optional per-profession breakdown in a small panel beside the Craft Bag.
+## Description: Know what your Craft Bag is worth. Sums its market value (via LibPrice) with a per-profession breakdown and a clickable, scrollable material list.
 ## SavedVariables: BureauOfMaterialWorth_SavedVariables
 ## DependsOn: LibAddonMenu-2.0>=43 LibPrice
 
@@ -18,6 +18,8 @@ Localization/$(language).lua
 BureauOfMaterialWorth.lua
 Valuation.lua
 Window.lua
+DetailWindow.xml
+DetailWindow.lua
 Settings.lua
 ; ---------------------------------------------------------------------------
 

@@ -270,9 +270,29 @@ local function AcquireRow(index)
             InformationTooltip:AddLine(stringformat(GetString(SI_BMW_TOOLTIP_UNPRICED),
                 data.unpricedSlots), "ZoFontGame", 0.82, 0.56, 0.37)
         end
+        -- Hint that the row is clickable for the full per-material breakdown.
+        ZO_Tooltip_AddDivider(InformationTooltip)
+        InformationTooltip:AddLine(GetString(SI_BMW_TOOLTIP_CLICK_HINT),
+            "ZoFontGameSmall", 0.55, 0.79, 0.62)
     end)
     container:SetHandler("OnMouseExit", function()
         ClearTooltip(InformationTooltip)
+    end)
+
+    -- Click opens the per-category material detail window. CT_CONTROL containers
+    -- don't fire OnClicked, so use OnMouseUp gated on the release landing inside.
+    container:SetHandler("OnMouseUp", function(self, button, upInside)
+        if button ~= MOUSE_BUTTON_INDEX_LEFT or not upInside then
+            return
+        end
+        local data = row.data
+        if not data then
+            return
+        end
+        local detail = addon.DetailWindow
+        if detail then
+            detail.Show(data.id, data.name)
+        end
     end)
 
     rowPool[index] = row
