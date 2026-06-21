@@ -11,6 +11,8 @@ local tonumber = tonumber
 -- no gameplay-affecting state, only presentation/diagnostics.
 --   debugMode             chat verbosity (mirrors the core's debugMode contract)
 --   showCategoryBreakdown show per-profession subtotals under the grand total
+--   showCategoryIcons     draw a profession icon left of each category name
+--   colorScaleGold        tint gold figures by magnitude (dim -> hot) instead of flat gold
 --   sortByValue           order category rows by descending value (vs profession order)
 --   deltaMode             "since last visit" baseline: "visit" (per open) or "session" (until reloadui/logout)
 --   showBackground        draw the panel's dark background fill
@@ -22,6 +24,8 @@ local tonumber = tonumber
 local DEFAULT_SAVED_VARS = {
     debugMode = 1,
     showCategoryBreakdown = true,
+    showCategoryIcons = true,
+    colorScaleGold = true,
     sortByValue = false,
     deltaMode = "visit",
     showBackground = true,
@@ -136,6 +140,34 @@ function Settings.RegisterSettingsPanel()
                 end
             end,
             default = DEFAULT_SAVED_VARS.showCategoryBreakdown,
+            width = "full",
+        },
+        {
+            type = "checkbox",
+            name = GetString(SI_BMW_SETTING_CATEGORY_ICONS_NAME),
+            tooltip = GetString(SI_BMW_SETTING_CATEGORY_ICONS_TOOLTIP),
+            getFunc = function() return GetSavedVarsOrDefaults().showCategoryIcons ~= false end,
+            setFunc = function(value)
+                private.savedVars.showCategoryIcons = value
+                if addon.Window then
+                    addon.Window.Update()
+                end
+            end,
+            default = DEFAULT_SAVED_VARS.showCategoryIcons,
+            width = "full",
+        },
+        {
+            type = "checkbox",
+            name = GetString(SI_BMW_SETTING_COLOR_SCALE_NAME),
+            tooltip = GetString(SI_BMW_SETTING_COLOR_SCALE_TOOLTIP),
+            getFunc = function() return GetSavedVarsOrDefaults().colorScaleGold ~= false end,
+            setFunc = function(value)
+                private.savedVars.colorScaleGold = value
+                if addon.Window then
+                    addon.Window.Update()
+                end
+            end,
+            default = DEFAULT_SAVED_VARS.colorScaleGold,
             width = "full",
         },
         {

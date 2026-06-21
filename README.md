@@ -44,26 +44,27 @@ of this actually worth?".
 - A **prominent grand total** with a subtitle showing total slots, stacks, and
   items.
 - A **per-profession breakdown** beneath it, which you can turn off to show just
-  the total. Each row shows the category's **share of the grand total** (e.g.
-  "Blacksmithing 42%"), and you can **sort rows by value** so your biggest
-  holdings float to the top.
+  the total. Each row carries a **profession icon**, the category's **share of
+  the grand total** (e.g. "Blacksmithing 42%"), and you can **sort rows by value**
+  so your biggest holdings float to the top.
 - **Hover tooltips** on each category reveal its value, slot count (distinct
   materials), stack count (in classic 200-item stacks), item count, and how many
   of its slots have no price.
-- Values are formatted with thousands separators and the gold icon, so the panel
-  reads at a glance.
+- Values are formatted with thousands separators and the gold icon, and can be
+  **tinted by magnitude** (a subtle dim-to-bright gold scale) so the largest
+  figures stand out. Both the icons and the color scale can be toggled off.
 
 ### Honest about its data
-- A footer line shows **when the value was last computed** ("just now", "5m ago",
-  …), refreshed live while the bag is open.
-- A second footer line reports **price coverage** and the **price source** it
-  drew from (e.g. "All slots priced · Prices: Master Merchant"). When some slots
-  have no price it says how many; when **more than half** are unpriced it escalates
-  to a loud "total unreliable" warning, so the figure never silently pretends to
-  be complete.
-- A **value-change delta** (▲/▼) shows how your Craft Bag's value changed — its
-  "gold since last visit" / "gold this session" — see the note below for exactly
-  what it counts.
+- The footer is a compact two-column readout. **Updated** shows when the value
+  was last computed ("just now", "5m ago", …), refreshed live while the bag is
+  open.
+- **Coverage** reports how many slots are priced (e.g. "468/469 priced") and the
+  **price source** it drew from, shown compactly (MM / TTC / ATT, with a "+" when
+  several contributed). When more than half the slots are unpriced the row turns
+  to a loud "unpriced!" warning, so the total never silently pretends to be
+  complete.
+- A **value-change row** (▲/▼) shows how your Craft Bag's value changed — labeled
+  "This visit" or "This session" — see the note below for exactly what it counts.
 - `/bmw refresh` re-queries prices — handy after Master Merchant or Tamriel Trade
   Centre finishes importing fresh data.
 
@@ -84,9 +85,11 @@ of this actually worth?".
   open. The configurable horizontal/vertical offset lets you nudge it to taste.
 
 ### Settings & localization
-- A clean **LibAddonMenu** panel: toggle the category breakdown and value
-  sorting, show/hide the background and border, set the panel width and offset,
-  choose chat-debug verbosity, and force a price refresh.
+- A clean **LibAddonMenu** panel: toggle the category breakdown, profession
+  icons, the gold color scale, and value sorting; choose the value-change
+  baseline (per visit or per session); show/hide the background and border; set
+  the panel width and offset; choose chat-debug verbosity; and force a price
+  refresh.
 - Full **English and Russian** localization.
 - Slash commands for everything (see below).
 

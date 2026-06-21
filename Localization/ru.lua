@@ -4,7 +4,7 @@
 local strings = {
     -- Settings panel
     [SI_BMW_PANEL_NAME] = "Bureau of Material Worth",
-    [SI_BMW_PANEL_DISPLAY_NAME] = "Bureau of Material Worth",
+    [SI_BMW_PANEL_DISPLAY_NAME] = "|c6FCB9FBureau|r of Material Worth",
     [SI_BMW_PANEL_INTRO] = "|c6FCB9FСтоимость ремесленной сумки с первого взгляда.|r Bureau of Material Worth суммирует рыночную стоимость всего содержимого ремесленной сумки и показывает её в небольшой панели рядом с сумкой, с необязательной разбивкой по профессиям.",
     [SI_BMW_PANEL_OVERVIEW] = "|c8C8A82• Использует LibPrice (Master Merchant / Tamriel Trade Centre / Arkadius' Trade Tools)\n• Считает лениво, только пока ремесленная сумка открыта\n• Обновляется постепенно при вкладывании и извлечении материалов|r",
 
@@ -13,6 +13,10 @@ local strings = {
 
     [SI_BMW_SETTING_CATEGORY_BREAKDOWN_NAME] = "Показывать разбивку по категориям",
     [SI_BMW_SETTING_CATEGORY_BREAKDOWN_TOOLTIP] = "Показывать подытоги по профессиям (кузнечное дело, алхимия, провизия и т.д.) под общей суммой. Если выключено, отображается только общая сумма.",
+    [SI_BMW_SETTING_CATEGORY_ICONS_NAME] = "Показывать иконки категорий",
+    [SI_BMW_SETTING_CATEGORY_ICONS_TOOLTIP] = "Показывать небольшую иконку профессии слева от названия каждой категории, чтобы строки читались быстрее. У «Прочего» нет профессии — иконка не отображается.",
+    [SI_BMW_SETTING_COLOR_SCALE_NAME] = "Окрашивать золото по стоимости",
+    [SI_BMW_SETTING_COLOR_SCALE_TOOLTIP] = "Подкрашивать сумму золота каждой категории в зависимости от величины — от тусклого для малых сумм до яркого для самых больших — чтобы самые ценные категории были заметны сразу. Если выключено, все суммы используют один золотой оттенок.",
     [SI_BMW_SETTING_SORT_BY_VALUE_NAME] = "Сортировать категории по стоимости",
     [SI_BMW_SETTING_SORT_BY_VALUE_TOOLTIP] = "Упорядочивать строки категорий по убыванию стоимости в золоте, чтобы самые ценные запасы всегда были сверху. Если выключено, используется фиксированный порядок профессий.",
     [SI_BMW_SETTING_DELTA_MODE_NAME] = "База для «с прошлого визита»",
@@ -48,15 +52,14 @@ local strings = {
     [SI_BMW_TOOLTIP_ITEMS] = "Предметов: %s",
     [SI_BMW_TOOLTIP_UNPRICED] = "Без цены: %d ячеек",
 
-    -- Window: footer
-    [SI_BMW_FOOTER_UPDATED] = "Обновлено %s",
-    [SI_BMW_FOOTER_ALL_PRICED] = "Все ячейки оценены",
-    [SI_BMW_FOOTER_SOME_UNPRICED] = "%d из %d ячеек без данных о цене",
-    [SI_BMW_FOOTER_LOW_COVERAGE] = "Итог ненадёжен: %d из %d ячеек без цены",
-    [SI_BMW_FOOTER_PRICES_FROM] = "Цены: %s",
-    [SI_BMW_FOOTER_PRICES_OTHERS] = "(и др.)",
-    [SI_BMW_FOOTER_DELTA] = "%s золота с прошлого визита",
-    [SI_BMW_FOOTER_DELTA_SESSION] = "%s золота за сессию",
+    -- Window: footer (two-column label -> value rows)
+    [SI_BMW_FOOTER_UPDATED_LABEL] = "Обновлено",
+    [SI_BMW_FOOTER_COVERAGE_LABEL] = "Покрытие",
+    [SI_BMW_FOOTER_COVERAGE_VALUE] = "%d/%d с ценой",
+    [SI_BMW_FOOTER_LOW_COVERAGE] = "%d/%d без цены!",
+    [SI_BMW_FOOTER_DELTA_LABEL] = "За визит",
+    [SI_BMW_FOOTER_DELTA_LABEL_SESSION] = "За сессию",
+    [SI_BMW_FOOTER_DELTA_VALUE] = "%s золота",
 
     -- Window: relative time
     [SI_BMW_TIME_NEVER] = "никогда",

@@ -1,7 +1,7 @@
 local strings = {
     -- Settings panel
     SI_BMW_PANEL_NAME = "Bureau of Material Worth",
-    SI_BMW_PANEL_DISPLAY_NAME = "Bureau of Material Worth",
+    SI_BMW_PANEL_DISPLAY_NAME = "|c6FCB9FBureau|r of Material Worth",
     SI_BMW_PANEL_INTRO = "|c6FCB9FCraft Bag value at a glance.|r Bureau of Material Worth sums the market value of everything in your Craft Bag and shows it in a small panel beside the bag, with an optional breakdown by crafting profession.",
     SI_BMW_PANEL_OVERVIEW = "|c8C8A82• Uses LibPrice (Master Merchant / Tamriel Trade Centre / Arkadius' Trade Tools)\n• Computes lazily, only while the Craft Bag is open\n• Updates incrementally as you deposit or withdraw materials|r",
 
@@ -10,6 +10,10 @@ local strings = {
 
     SI_BMW_SETTING_CATEGORY_BREAKDOWN_NAME = "Show category breakdown",
     SI_BMW_SETTING_CATEGORY_BREAKDOWN_TOOLTIP = "Show per-profession subtotals (Blacksmithing, Alchemy, Provisioning, and so on) beneath the grand total. When off, only the grand total is shown.",
+    SI_BMW_SETTING_CATEGORY_ICONS_NAME = "Show category icons",
+    SI_BMW_SETTING_CATEGORY_ICONS_TOOLTIP = "Show a small profession icon to the left of each category name, so the rows are quicker to scan. \"Other\" has no profession and shows no icon.",
+    SI_BMW_SETTING_COLOR_SCALE_NAME = "Color gold by value",
+    SI_BMW_SETTING_COLOR_SCALE_TOOLTIP = "Tint each category's gold figure by how large it is — dim for small amounts up to a hot color for the biggest — so your most valuable categories stand out at a glance. When off, all figures use the same gold tone.",
     SI_BMW_SETTING_SORT_BY_VALUE_NAME = "Sort categories by value",
     SI_BMW_SETTING_SORT_BY_VALUE_TOOLTIP = "Order the category rows by descending gold value, so your most valuable holdings are always on top. When off, they follow the fixed profession order.",
     SI_BMW_SETTING_DELTA_MODE_NAME = "\"Since last visit\" baseline",
@@ -47,15 +51,14 @@ local strings = {
     SI_BMW_TOOLTIP_ITEMS = "Items: %s",
     SI_BMW_TOOLTIP_UNPRICED = "Without price: %d slots",
 
-    -- Window: footer
-    SI_BMW_FOOTER_UPDATED = "Updated %s",
-    SI_BMW_FOOTER_ALL_PRICED = "All slots priced",
-    SI_BMW_FOOTER_SOME_UNPRICED = "%d of %d slots have no price data",
-    SI_BMW_FOOTER_LOW_COVERAGE = "Total unreliable: %d of %d slots unpriced",
-    SI_BMW_FOOTER_PRICES_FROM = "Prices: %s",
-    SI_BMW_FOOTER_PRICES_OTHERS = "(+others)",
-    SI_BMW_FOOTER_DELTA = "%s gold since last visit",
-    SI_BMW_FOOTER_DELTA_SESSION = "%s gold this session",
+    -- Window: footer (two-column label -> value rows)
+    SI_BMW_FOOTER_UPDATED_LABEL = "Updated",
+    SI_BMW_FOOTER_COVERAGE_LABEL = "Coverage",
+    SI_BMW_FOOTER_COVERAGE_VALUE = "%d/%d priced",
+    SI_BMW_FOOTER_LOW_COVERAGE = "%d/%d unpriced!",
+    SI_BMW_FOOTER_DELTA_LABEL = "This visit",
+    SI_BMW_FOOTER_DELTA_LABEL_SESSION = "This session",
+    SI_BMW_FOOTER_DELTA_VALUE = "%s gold",
 
     -- Window: relative time
     SI_BMW_TIME_NEVER = "never",

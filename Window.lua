@@ -53,14 +53,70 @@ Window.WIDTH_STEP = WINDOW_WIDTH_STEP
 
 local GOLD_ICON = "|t16:16:EsoUI/Art/currency/currency_gold.dds|t"
 
+-- Up/down arrows for the value-change delta. We use the game's own sort-arrow
+-- textures rather than the Unicode ▲/▼ glyphs because the ESO UI font does not
+-- render those reliably (they often show as blank or tofu). Inline textures
+-- always draw, matching how the gold icon is embedded above.
+local ARROW_UP = "|t16:16:EsoUI/Art/Miscellaneous/list_sortUp.dds|t"
+local ARROW_DOWN = "|t16:16:EsoUI/Art/Miscellaneous/list_sortDown.dds|t"
+
+-- Per-category profession icons, keyed by the category ids in Valuation's
+-- CATEGORY_DEFINITIONS. We use the game's "mapkey" crafting icons (the same set
+-- the crafting-writ addons use), which are clean monochrome glyphs that read
+-- well at small sizes. "other" is not a profession, so it gets the generic
+-- craft-bag icon rather than being left blank.
+local CATEGORY_ICONS = {
+    blacksmithing = "esoui/art/icons/mapkey/mapkey_smithy.dds",
+    clothier      = "esoui/art/icons/mapkey/mapkey_clothier.dds",
+    woodworking   = "esoui/art/icons/mapkey/mapkey_woodworker.dds",
+    jewelry       = "esoui/art/icons/mapkey/mapkey_jewelrycrafting.dds",
+    alchemy       = "esoui/art/icons/mapkey/mapkey_alchemist.dds",
+    enchanting    = "esoui/art/icons/mapkey/mapkey_enchanter.dds",
+    provisioning  = "esoui/art/icons/mapkey/mapkey_inn.dds",
+    other         = "esoui/art/inventory/inventory_tabicon_craftbag_up.dds",
+}
+
+-- Inline icon markup for a category, or empty string when it has none.
+local function CategoryIcon(categoryId)
+    local path = CATEGORY_ICONS[categoryId]
+    if not path then
+        return ""
+    end
+    return "|t18:18:" .. path .. "|t "
+end
+
 local function Colorize(hex, text)
     return stringformat("|c%s%s|r", hex, text)
 end
 
+-- Magnitude tint for gold figures. Deliberately SUBTLE: every tier stays within
+-- the gold family and only shifts brightness/warmth a touch, so larger amounts
+-- read as a slightly richer gold rather than changing color outright (no red).
+-- A value lands in the highest tier whose floor it meets.
+local GOLD_SCALE = {
+    { floor = 10000000, color = "FFE9A0" },  -- 10M+  : bright warm gold
+    { floor =  1000000, color = "F7DA63" },  -- 1M+   : rich gold
+    { floor =   100000, color = "F4D03F" },  -- 100k+ : base gold tone
+    { floor =    10000, color = "D8BF52" },  -- 10k+  : slightly muted gold
+    { floor =        0, color = "B6A668" },  -- <10k  : dim gold
+}
+
+local function GoldScaleColor(amount)
+    amount = amount or 0
+    for i = 1, #GOLD_SCALE do
+        if amount >= GOLD_SCALE[i].floor then
+            return GOLD_SCALE[i].color
+        end
+    end
+    return COLOR_GOLD
+end
+
 -- Format a gold amount with thousands separators + the gold icon, matching the
--- presentation used in LibPrice's own example output.
-local function FormatGold(amount)
-    return Colorize(COLOR_GOLD, ZO_LocalizeDecimalNumber(zo_round(amount or 0))) .. " " .. GOLD_ICON
+-- presentation used in LibPrice's own example output. An optional hex color
+-- overrides the default gold tone (used by the magnitude color scale).
+local function FormatGold(amount, colorOverride)
+    return Colorize(colorOverride or COLOR_GOLD,
+        ZO_LocalizeDecimalNumber(zo_round(amount or 0))) .. " " .. GOLD_ICON
 end
 
 -- "How long ago" for the footer, from a game-time-ms stamp to a short localized
@@ -92,9 +148,11 @@ local totalLabel      -- prominent grand-total gold figure
 local subtitleLabel   -- "<n> slots · <n> stacks · <n> items"
 local dividerTop      -- line under the header block
 local dividerBottom   -- line above the footer
-local footerUpdated   -- "Updated <ago>"
-local footerPrices    -- price-availability note (+ dominant source)
-local footerDelta     -- "since last visit" gold change
+-- Footer rows are two-column (muted label left, value right), mirroring the
+-- category rows above. Each is a { container, label, value } record.
+local footerUpdatedRow  -- "Updated" -> "<ago>"
+local footerPricesRow   -- "Coverage" -> "<n>/<n> · <source>" (or a warning)
+local footerDeltaRow    -- "This visit"/"This session" -> "▲ <gold>" (hidden when none)
 local rowPool         -- reusable category rows { container, name, gold, data }
 
 -- Footer "updated X ago" should feel live even when nothing else changes, so a
@@ -129,6 +187,32 @@ local function CreateDivider(name)
     divider:SetHeight(4)
     divider:SetColor(1, 1, 1, 0.4)
     return divider
+end
+
+-- Build a two-column footer row (muted label left, value right), mirroring the
+-- category-row layout so the footer reads as part of the same table. Returns a
+-- { container, label, value } record; widths track CurrentWidth() and are
+-- re-applied by Window.ApplyWidth().
+local function CreateFooterRow(name)
+    local container = WINDOW_MANAGER:CreateControl(name, windowControl, CT_CONTROL)
+    container:SetWidth(CurrentWidth() - PADDING * 2)
+    container:SetHeight(FOOTER_LINE)
+
+    local label = WINDOW_MANAGER:CreateControl(nil, container, CT_LABEL)
+    label:SetFont("ZoFontGameSmall")
+    label:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
+    label:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+    label:SetAnchor(LEFT, container, LEFT, 0, 0)
+    label:SetWidth(CurrentWidth() * 0.4)
+
+    local value = WINDOW_MANAGER:CreateControl(nil, container, CT_LABEL)
+    value:SetFont("ZoFontGameSmall")
+    value:SetHorizontalAlignment(TEXT_ALIGN_RIGHT)
+    value:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+    value:SetAnchor(RIGHT, container, RIGHT, 0, 0)
+    value:SetWidth(CurrentWidth() * 0.6 - PADDING)
+
+    return { container = container, label = label, value = value }
 end
 
 -- Build (or fetch from the pool) the Nth category row. Each row is a mouse-
@@ -237,83 +321,74 @@ function Window.Initialize()
     dividerTop = CreateDivider(addon.name .. "_DividerTop")
     dividerBottom = CreateDivider(addon.name .. "_DividerBottom")
 
-    footerUpdated = WINDOW_MANAGER:CreateControl(addon.name .. "_FooterUpdated", windowControl, CT_LABEL)
-    footerUpdated:SetFont("ZoFontGameSmall")
-    footerUpdated:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
-
-    footerPrices = WINDOW_MANAGER:CreateControl(addon.name .. "_FooterPrices", windowControl, CT_LABEL)
-    footerPrices:SetFont("ZoFontGameSmall")
-    footerPrices:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
-
-    footerDelta = WINDOW_MANAGER:CreateControl(addon.name .. "_FooterDelta", windowControl, CT_LABEL)
-    footerDelta:SetFont("ZoFontGameSmall")
-    footerDelta:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
+    footerUpdatedRow = CreateFooterRow(addon.name .. "_FooterUpdated")
+    footerPricesRow = CreateFooterRow(addon.name .. "_FooterPrices")
+    footerDeltaRow = CreateFooterRow(addon.name .. "_FooterDelta")
 end
 
 -- Render just the footer text from the cached snapshot. Split out so the
 -- low-frequency tick can refresh the "updated X ago" line without re-laying-out
--- the whole window.
+-- the whole window. Each footer row is two columns: a muted label on the left
+-- and the value on the right, matching the category rows above.
 local function RenderFooter()
     if not lastSnapshot then
         return
     end
 
-    footerUpdated:SetText(Colorize(COLOR_MUTED,
-        stringformat(GetString(SI_BMW_FOOTER_UPDATED), FormatTimeAgo(lastSnapshot.lastScanTimeMs))))
+    -- Updated <ago>
+    footerUpdatedRow.label:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_FOOTER_UPDATED_LABEL)))
+    footerUpdatedRow.value:SetText(Colorize(COLOR_MUTED, FormatTimeAgo(lastSnapshot.lastScanTimeMs)))
 
-    -- Price-coverage line, always suffixed with the dominant source when one is
-    -- known ("... · Master Merchant"), so the figures stay attributable even
-    -- when some slots are unpriced (the common case -- style mats etc. rarely
-    -- have a price). The one exception is the low-coverage warning: when more
-    -- than half the slots are unpriced the total is unreliable, so we keep that
-    -- line loud and drop the source as noise.
+    -- Coverage -> "<priced>/<slots> · <source>", or a warning when unpriced.
+    -- The source is shown compactly (MM/TTC/ATT) to fit the value column; when
+    -- more than half the slots are unpriced the total is unreliable, so the row
+    -- turns amber and drops the source as noise.
     local slots = lastSnapshot.slots or 0
     local unpriced = lastSnapshot.unpricedSlots or 0
+    local priced = slots - unpriced
 
-    local function WithSource(text)
-        if lastSnapshot.sourceName then
-            local source = stringformat(GetString(SI_BMW_FOOTER_PRICES_FROM), lastSnapshot.sourceName)
+    local function SourceSuffix()
+        if lastSnapshot.sourceShort then
+            local s = " · " .. lastSnapshot.sourceShort
             if lastSnapshot.sourceHasOthers then
-                source = source .. " " .. GetString(SI_BMW_FOOTER_PRICES_OTHERS)
+                s = s .. "+"
             end
-            return text .. " · " .. source
+            return s
         end
-        return text
+        return ""
     end
 
-    if unpriced > 0 then
-        local lowCoverage = slots > 0 and (unpriced * 2 > slots)
-        if lowCoverage then
-            footerPrices:SetText(Colorize(COLOR_WARN,
-                stringformat(GetString(SI_BMW_FOOTER_LOW_COVERAGE), unpriced, slots)))
-        else
-            footerPrices:SetText(
-                Colorize(COLOR_WARN, stringformat(GetString(SI_BMW_FOOTER_SOME_UNPRICED), unpriced, slots))
-                .. Colorize(COLOR_MUTED, WithSource("")))
-        end
-    elseif lastSnapshot.sourceName then
-        footerPrices:SetText(Colorize(COLOR_MUTED,
-            WithSource(GetString(SI_BMW_FOOTER_ALL_PRICED))))
+    footerPricesRow.label:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_FOOTER_COVERAGE_LABEL)))
+    if unpriced > 0 and slots > 0 and (unpriced * 2 > slots) then
+        -- Low coverage: loud warning in place of the usual count.
+        footerPricesRow.value:SetText(Colorize(COLOR_WARN,
+            stringformat(GetString(SI_BMW_FOOTER_LOW_COVERAGE), unpriced, slots)))
     else
-        footerPrices:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_FOOTER_ALL_PRICED)))
+        local countColor = unpriced > 0 and COLOR_WARN or COLOR_MUTED
+        local countText = stringformat(GetString(SI_BMW_FOOTER_COVERAGE_VALUE), priced, slots)
+        footerPricesRow.value:SetText(
+            Colorize(countColor, countText) .. Colorize(COLOR_MUTED, SourceSuffix()))
     end
 
     -- Value-change delta. Hidden when there is no baseline yet or the total is
-    -- unchanged, so the line only appears when it says something. The label
-    -- depends on the configured baseline mode (per-visit vs per-session).
+    -- unchanged. The label reflects the configured baseline mode; the value is
+    -- an arrow (direction) + colored magnitude.
     local delta = lastSnapshot.delta
     if delta and delta ~= 0 then
-        local color = delta > 0 and COLOR_GAIN or COLOR_LOSS
-        local sign = delta > 0 and "+" or "-"
+        local gain = delta > 0
+        local color = gain and COLOR_GAIN or COLOR_LOSS
+        local arrow = gain and ARROW_UP or ARROW_DOWN
         local magnitude = ZO_LocalizeDecimalNumber(zo_round(mathabs(delta)))
         local labelKey = lastSnapshot.deltaMode == "session"
-            and SI_BMW_FOOTER_DELTA_SESSION or SI_BMW_FOOTER_DELTA
-        footerDelta:SetHidden(false)
-        footerDelta:SetText(Colorize(color,
-            stringformat(GetString(labelKey), sign .. magnitude)))
+            and SI_BMW_FOOTER_DELTA_LABEL_SESSION or SI_BMW_FOOTER_DELTA_LABEL
+        footerDeltaRow.container:SetHidden(false)
+        footerDeltaRow.label:SetText(Colorize(COLOR_MUTED, GetString(labelKey)))
+        -- The arrow texture carries the direction; the number is colored, the
+        -- texture left outside Colorize since textures aren't tinted.
+        footerDeltaRow.value:SetText(arrow .. " " .. Colorize(color,
+            stringformat(GetString(SI_BMW_FOOTER_DELTA_VALUE), magnitude)))
     else
-        footerDelta:SetHidden(true)
-        footerDelta:SetText("")
+        footerDeltaRow.container:SetHidden(true)
     end
 end
 
@@ -361,6 +436,8 @@ function Window.Update()
     -- Category rows (optional). Each shows name + gold; hover reveals the detail.
     local rowCount = 0
     local showBreakdown = sv.showCategoryBreakdown ~= false
+    local showIcons = sv.showCategoryIcons ~= false
+    local colorScale = sv.colorScaleGold ~= false
     if showBreakdown then
         local rows = snapshot.categories
         local grandTotal = snapshot.gold
@@ -368,10 +445,14 @@ function Window.Update()
             local data = rows[i]
             local row = AcquireRow(i)
             row.data = data
-            -- Name + the category's share of the grand total, so it reads
-            -- "Blacksmithing 42%" at a glance. Guard against a zero total (an
-            -- all-unpriced bag) so the share is simply omitted rather than NaN.
+            -- Optional profession icon + name + the category's share of the grand
+            -- total, so it reads "[icon] Blacksmithing 42%" at a glance. Guard
+            -- against a zero total (an all-unpriced bag) so the share is simply
+            -- omitted rather than NaN.
             local nameText = Colorize(COLOR_NAME, data.name)
+            if showIcons then
+                nameText = CategoryIcon(data.id) .. nameText
+            end
             if grandTotal and grandTotal > 0 then
                 local percent = zo_round(data.gold / grandTotal * 100)
                 nameText = nameText .. " " .. Colorize(COLOR_MUTED,
@@ -380,7 +461,7 @@ function Window.Update()
             row.name:SetText(nameText)
             -- Flag categories that have unpriced slots with a subtle marker so
             -- the total reads honestly at a glance, detail is in the tooltip.
-            local goldText = FormatGold(data.gold)
+            local goldText = FormatGold(data.gold, colorScale and GoldScaleColor(data.gold) or nil)
             if data.unpricedSlots > 0 then
                 goldText = goldText .. " " .. Colorize(COLOR_WARN, "*")
             end
@@ -404,25 +485,25 @@ function Window.Update()
         y = PADDING + TITLE_HEIGHT + SECTION_GAP + TOTAL_HEIGHT + SUBTITLE_HEIGHT + SECTION_GAP
     end
 
-    -- Footer block: bottom divider + the two info lines.
+    -- Footer block: bottom divider + the info rows (two-column label -> value).
     y = y + SECTION_GAP
     dividerBottom:ClearAnchors()
     dividerBottom:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, y)
     y = y + DIVIDER_GAP
 
-    footerUpdated:ClearAnchors()
-    footerUpdated:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, y)
+    footerUpdatedRow.container:ClearAnchors()
+    footerUpdatedRow.container:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, y)
     y = y + FOOTER_LINE
 
-    footerPrices:ClearAnchors()
-    footerPrices:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, y)
+    footerPricesRow.container:ClearAnchors()
+    footerPricesRow.container:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, y)
     y = y + FOOTER_LINE
 
-    -- Optional since-last-visit delta line. Only reserves vertical space when it
-    -- will actually be shown (a known, non-zero delta), so the panel doesn't grow
-    -- an empty gap on the first visit.
-    footerDelta:ClearAnchors()
-    footerDelta:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, y)
+    -- Optional value-change row. Only reserves vertical space when it will
+    -- actually be shown (a known, non-zero delta), so the panel doesn't grow an
+    -- empty gap on the first visit.
+    footerDeltaRow.container:ClearAnchors()
+    footerDeltaRow.container:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, y)
     local delta = snapshot.delta
     if delta and delta ~= 0 then
         y = y + FOOTER_LINE
@@ -498,6 +579,19 @@ function Window.ApplyWidth()
             row.gold:SetWidth(width * 0.5 - PADDING)
         end
     end
+
+    -- Footer rows share the same two-column geometry (40/60 split).
+    local function ResizeFooterRow(row)
+        if not row then
+            return
+        end
+        row.container:SetWidth(innerWidth)
+        row.label:SetWidth(width * 0.4)
+        row.value:SetWidth(width * 0.6 - PADDING)
+    end
+    ResizeFooterRow(footerUpdatedRow)
+    ResizeFooterRow(footerPricesRow)
+    ResizeFooterRow(footerDeltaRow)
 
     Window.Update()
 end

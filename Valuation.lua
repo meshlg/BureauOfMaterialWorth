@@ -54,11 +54,30 @@ local SOURCE_DISPLAY_NAMES = {
     npc   = "NPC Vendor",
 }
 
+-- Compact source labels for the tight footer value column, where the full names
+-- above would not fit. Falls back to the raw key (upper-cased) for unknowns.
+local SOURCE_SHORT_NAMES = {
+    mm    = "MM",
+    att   = "ATT",
+    ttc   = "TTC",
+    furc  = "FurC",
+    crown = "Crown",
+    rolis = "Rolis",
+    npc   = "NPC",
+}
+
 local function SourceDisplayName(sourceKey)
     if not sourceKey then
         return nil
     end
     return SOURCE_DISPLAY_NAMES[sourceKey] or sourceKey
+end
+
+local function SourceShortName(sourceKey)
+    if not sourceKey then
+        return nil
+    end
+    return SOURCE_SHORT_NAMES[sourceKey] or string.upper(sourceKey)
 end
 
 -- Category model
@@ -517,9 +536,9 @@ local function GetDominantSource()
         end
     end
     if not bestKey then
-        return nil, false
+        return nil, nil, false
     end
-    return SourceDisplayName(bestKey), distinct > 1
+    return SourceDisplayName(bestKey), SourceShortName(bestKey), distinct > 1
 end
 
 -- Snapshot consumed by the window. Returns a single table so the window does one
@@ -564,7 +583,7 @@ function Valuation.GetSnapshot(sortByValue)
         end)
     end
 
-    local sourceName, sourceHasOthers = GetDominantSource()
+    local sourceName, sourceShort, sourceHasOthers = GetDominantSource()
 
     return {
         gold = grandGold,
@@ -575,6 +594,7 @@ function Valuation.GetSnapshot(sortByValue)
         delta = deltaSinceLastVisit,
         deltaMode = (private.savedVars and private.savedVars.deltaMode) or "visit",
         sourceName = sourceName,
+        sourceShort = sourceShort,
         sourceHasOthers = sourceHasOthers,
         lastScanTimeMs = lastScanTimeMs,
         categories = categories,
