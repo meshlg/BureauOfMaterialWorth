@@ -64,6 +64,38 @@ local strings = {
     -- Shown when a material has no recorded price baseline yet, or no price.
     SI_BMW_DETAIL_GROWTH_NEW = "-",
     SI_BMW_DETAIL_EMPTY = "No materials in this category.",
+    -- Search box (whole craft bag) in the detail window.
+    SI_BMW_DETAIL_SEARCH_HINT = "Search...",
+    SI_BMW_DETAIL_SEARCH_TITLE = "Search results",
+
+    -- Withdraw dialog: opened by clicking a material row, moves the material out
+    -- of the Craft Bag into the backpack.
+    SI_BMW_WITHDRAW_TITLE = "Withdraw %s",
+    SI_BMW_WITHDRAW_FREE_SLOTS = "Free backpack slots: %d",
+    SI_BMW_WITHDRAW_MAX = "Max withdrawable: %s",
+    -- %s already carries the gold icon (see FormatGold).
+    SI_BMW_WITHDRAW_TOTAL_VALUE = "Total value: %s",
+    SI_BMW_WITHDRAW_QTY_LABEL = "Quantity",
+    -- Preset buttons. The plain counts (1/10/100) show the number itself; the
+    -- stack presets use these so "200" reads as "1 stack", "2000" as "10 stacks".
+    SI_BMW_WITHDRAW_PRESET_STACK = "%d stack",
+    SI_BMW_WITHDRAW_PRESET_STACKS = "%d stacks",
+    SI_BMW_WITHDRAW_CONFIRM = "Withdraw",
+    SI_BMW_WITHDRAW_CANCEL = "Cancel",
+    SI_BMW_WITHDRAW_BACKPACK_FULL = "Backpack is full",
+    -- Live progress while a multi-stack withdrawal runs. %d / %d = moved / total.
+    SI_BMW_WITHDRAW_PROGRESS = "Withdrawing... %d / %d",
+    -- Hint shown when hovering a detail row: how the two mouse buttons act.
+    SI_BMW_WITHDRAW_HINT = "LMB: withdraw    RMB: add to queue",
+
+    -- Withdraw queue: the multi-material list, anchored beside the detail window.
+    SI_BMW_QUEUE_TITLE = "Withdraw queue",
+    SI_BMW_QUEUE_EMPTY = "Right-click materials to queue them.",
+    -- Footer summary. %d = slots the queue needs, %d = free backpack slots.
+    SI_BMW_QUEUE_SLOTS = "Needs %d slots / %d free",
+    SI_BMW_QUEUE_TOTAL = "Queue value: %s",
+    SI_BMW_QUEUE_WITHDRAW_ALL = "Withdraw all",
+    SI_BMW_QUEUE_CLEAR = "Clear",
 
     -- Window: footer (two-column label -> value rows)
     SI_BMW_FOOTER_UPDATED_LABEL = "Updated",

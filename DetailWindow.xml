@@ -49,5 +49,54 @@
                 </Label>
             </Controls>
         </Control>
+
+        <!--
+            Withdraw-queue list + row template (Part B). Same recycled-row
+            pattern as the detail list above, but the row is interactive: the Qty
+            column is an editable numeric box and there is a Remove button. The
+            row's font/size differ slightly (taller, 28px) so the editbox and
+            button have room. Column layout (left -> right):
+              Icon    24px  fixed, left
+              Name    flexible (Icon -> Qty)
+              Qty     64px  editable numeric, anchored left of Value
+              Value   120px right-aligned, anchored left of Remove
+              Remove  24px  button at the right edge
+        -->
+        <Control name="BureauOfMaterialWorth_WithdrawQueueList" inherits="ZO_ScrollList" virtual="true" />
+
+        <Control name="BureauOfMaterialWorth_WithdrawQueueRow" virtual="true" mouseEnabled="true">
+            <Dimensions y="28" />
+            <Controls>
+                <Texture name="$(parent)Icon">
+                    <Dimensions x="24" y="24" />
+                    <Anchor point="LEFT" relativeTo="$(parent)" relativePoint="LEFT" offsetX="2" />
+                </Texture>
+
+                <Button name="$(parent)Remove" inherits="ZO_CloseButton">
+                    <Anchor point="RIGHT" relativeTo="$(parent)" relativePoint="RIGHT" offsetX="-4" />
+                </Button>
+
+                <Label name="$(parent)Value" font="ZoFontGame" horizontalAlignment="RIGHT" verticalAlignment="CENTER">
+                    <Dimensions x="120" />
+                    <Anchor point="RIGHT" relativeTo="$(parent)Remove" relativePoint="LEFT" offsetX="-8" />
+                </Label>
+
+                <Backdrop name="$(parent)QtyBg" inherits="ZO_DefaultBackdrop">
+                    <Dimensions x="64" y="24" />
+                    <Anchor point="RIGHT" relativeTo="$(parent)Value" relativePoint="LEFT" offsetX="-8" />
+                    <Controls>
+                        <EditBox name="$(parent)Edit" inherits="ZO_DefaultEditForBackdrop">
+                            <Anchor point="TOPLEFT" relativeTo="$(parent)" relativePoint="TOPLEFT" offsetX="4" offsetY="1" />
+                            <Anchor point="BOTTOMRIGHT" relativeTo="$(parent)" relativePoint="BOTTOMRIGHT" offsetX="-4" offsetY="-1" />
+                        </EditBox>
+                    </Controls>
+                </Backdrop>
+
+                <Label name="$(parent)Name" font="ZoFontGame" horizontalAlignment="LEFT" verticalAlignment="CENTER">
+                    <Anchor point="LEFT" relativeTo="$(parent)Icon" relativePoint="RIGHT" offsetX="6" />
+                    <Anchor point="RIGHT" relativeTo="$(parent)QtyBg" relativePoint="LEFT" offsetX="-6" />
+                </Label>
+            </Controls>
+        </Control>
     </Controls>
 </GuiXml>

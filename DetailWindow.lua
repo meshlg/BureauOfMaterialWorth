@@ -55,10 +55,24 @@ local divider
 local listControl     -- ZO_ScrollList
 local emptyLabel      -- shown when the category has no materials
 local currentCategoryId  -- remembered so a refresh can rebuild the same view
+local currentCategoryName  -- remembered so the title can restore after a search
+local searchBox       -- the search editbox
+local searchQuery = ""  -- current search text; "" means "show the category"
+local suppressSearchEvent = false  -- guards the search box against its own SetText
+
+-- Forward declarations so the search-box handlers built in Initialize can
+-- capture these as upvalues; they are defined (as plain assignments) further
+-- down, after Initialize.
+local FillList, Populate, UpdateTitle
 
 -- Populate one recycled row from its material record. Mirrors the column
 -- geometry declared in DetailWindow.xml.
 local function SetupRow(rowControl, data)
+    -- Stash the current record on the control so the click handlers (bound once
+    -- below) always act on the freshest data; ZO_ScrollList recycles a small
+    -- pool of rows across many materials.
+    rowControl.bmwData = data
+
     rowControl:GetNamedChild("Icon"):SetTexture(data.icon)
 
     local nameLabel = rowControl:GetNamedChild("Name")
@@ -90,6 +104,39 @@ local function SetupRow(rowControl, data)
     else
         changeLabel:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_DETAIL_GROWTH_NEW)))
     end
+
+    -- Bind the interaction handlers once per recycled control (sentinel), then
+    -- let them read rowControl.bmwData at event time. Left click opens the
+    -- withdraw popup for this material; right click adds it to the withdraw
+    -- queue. A hover tooltip spells out both, matching Window.lua's affordance.
+    if not rowControl.bmwClickBound then
+        rowControl.bmwClickBound = true
+
+        rowControl:SetHandler("OnMouseUp", function(self, button, upInside)
+            if not upInside then
+                return
+            end
+            local rowData = self.bmwData
+            local withdraw = addon.WithdrawDialog
+            if not rowData or not withdraw then
+                return
+            end
+            if button == MOUSE_BUTTON_INDEX_LEFT then
+                withdraw.Open(rowData)
+            elseif button == MOUSE_BUTTON_INDEX_RIGHT then
+                withdraw.AddToQueue(rowData)
+            end
+        end)
+
+        rowControl:SetHandler("OnMouseEnter", function(self)
+            InitializeTooltip(InformationTooltip, self, BOTTOM, 0, -2, TOP)
+            InformationTooltip:AddLine(GetString(SI_BMW_WITHDRAW_HINT),
+                "ZoFontGameSmall", 0.55, 0.79, 0.62)
+        end)
+        rowControl:SetHandler("OnMouseExit", function()
+            ClearTooltip(InformationTooltip)
+        end)
+    end
 end
 
 function DetailWindow.Initialize()
@@ -118,7 +165,13 @@ function DetailWindow.Initialize()
     titleLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_DetailTitle", windowControl, CT_LABEL)
     titleLabel:SetFont("ZoFontWinH4")
     titleLabel:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
+    titleLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+    titleLabel:SetMaxLineCount(1)
+    titleLabel:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
     titleLabel:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, PADDING)
+    -- Stop the title before the search box so a long category name does not run
+    -- under it (search box 220 wide + close button + paddings to the right).
+    titleLabel:SetDimensions(WINDOW_WIDTH - PADDING * 2 - 220 - 32 - 16, TITLE_HEIGHT)
 
     -- Close button (built-in virtual) anchored top-right.
     local closeButton = WINDOW_MANAGER:CreateControlFromVirtual(
@@ -126,6 +179,64 @@ function DetailWindow.Initialize()
     closeButton:SetAnchor(TOPRIGHT, windowControl, TOPRIGHT, -PADDING, PADDING)
     closeButton:SetHandler("OnClicked", function()
         DetailWindow.Hide()
+    end)
+
+    -- Search box (whole-bag), to the left of the close button. Typing here
+    -- switches the list to materials matching the query across every category;
+    -- clearing it returns to the opened category. The title column is sized to
+    -- leave room for it.
+    local SEARCH_WIDTH = 220
+    local searchBg = WINDOW_MANAGER:CreateControlFromVirtual(
+        addon.name .. "_DetailSearchBg", windowControl, "ZO_DefaultBackdrop")
+    searchBg:SetDimensions(SEARCH_WIDTH, TITLE_HEIGHT)
+    searchBg:ClearAnchors()
+    searchBg:SetAnchor(TOPRIGHT, windowControl, TOPRIGHT, -PADDING - 32, PADDING)
+    -- Clicking anywhere on the backdrop (incl. its padding) focuses the editbox,
+    -- so the hit target is the whole field, not just the text glyphs.
+    searchBg:SetMouseEnabled(true)
+    searchBg:SetHandler("OnMouseUp", function()
+        if searchBox then
+            searchBox:TakeFocus()
+        end
+    end)
+
+    -- Faint placeholder shown only while the box is empty. Created BEFORE the
+    -- editbox (so the editbox is the top-most sibling for mouse hits) and with
+    -- mouse explicitly disabled so it never intercepts clicks meant for the box.
+    local searchHint = WINDOW_MANAGER:CreateControl(addon.name .. "_DetailSearchHint", searchBg, CT_LABEL)
+    searchHint:SetFont("ZoFontGame")
+    searchHint:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+    searchHint:SetAnchor(LEFT, searchBg, LEFT, 8, 0)
+    searchHint:SetMouseEnabled(false)
+    searchHint:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_DETAIL_SEARCH_HINT)))
+
+    searchBox = WINDOW_MANAGER:CreateControl(addon.name .. "_DetailSearch", searchBg, CT_EDITBOX)
+    searchBox:SetAnchor(TOPLEFT, searchBg, TOPLEFT, 8, 2)
+    searchBox:SetAnchor(BOTTOMRIGHT, searchBg, BOTTOMRIGHT, -8, -2)
+    searchBox:SetFont("ZoFontGame")
+    searchBox:SetMaxInputChars(50)
+    searchBox:SetMouseEnabled(true)
+    searchBox:SetText("")
+    -- Clicking the box should focus it for typing. Some custom (non-dialog)
+    -- editboxes do not auto-focus reliably, so take focus explicitly.
+    searchBox:SetHandler("OnMouseUp", function(self)
+        self:TakeFocus()
+    end)
+
+    searchBox:SetHandler("OnTextChanged", function()
+        -- suppressSearchEvent guards against the SetText we issue on a category
+        -- open (which would otherwise re-trigger this and clobber the view).
+        if not suppressSearchEvent then
+            searchQuery = searchBox:GetText() or ""
+            UpdateTitle()
+            Populate()
+        end
+        searchHint:SetHidden((searchBox:GetText() or "") ~= "")
+    end)
+    -- Escape clears the search and drops focus, returning to the category view.
+    searchBox:SetHandler("OnEscape", function(self)
+        self:SetText("")
+        self:LoseFocus()
     end)
 
     -- Column headers, aligned to the same geometry as the XML row template.
@@ -189,11 +300,8 @@ function DetailWindow.Initialize()
     windowControl:SetHeight(listY + ROW_HEIGHT * LIST_MAX_ROWS + PADDING)
 end
 
--- Rebuild the scroll list from the current category's materials. Separate from
--- Show so a future live refresh can reuse it.
-local function Populate(categoryId)
-    local materials = addon.Valuation.GetCategoryMaterials(categoryId)
-
+-- Fill the scroll list from a prebuilt materials array.
+function FillList(materials)
     local dataList = ZO_ScrollList_GetDataList(listControl)
     ZO_ScrollList_Clear(listControl)
 
@@ -205,8 +313,31 @@ local function Populate(categoryId)
     -- list renders blank.
     ZO_ScrollList_Commit(listControl)
 
-    local isEmpty = #materials == 0
-    emptyLabel:SetHidden(not isEmpty)
+    emptyLabel:SetHidden(#materials > 0)
+end
+
+-- Rebuild the scroll list for the current view: the whole-bag search results
+-- when a query is active, otherwise the current category. Centralized so the
+-- search box, a category open, and the live refresh all route through one place.
+function Populate()
+    if searchQuery ~= "" then
+        FillList(addon.Valuation.GetMaterialsMatching(searchQuery))
+    elseif currentCategoryId then
+        FillList(addon.Valuation.GetCategoryMaterials(currentCategoryId))
+    else
+        FillList({})
+    end
+end
+
+-- Keep the title in step with the view: the searched-across-bag label while a
+-- query is active, otherwise the category name.
+function UpdateTitle()
+    if searchQuery ~= "" then
+        titleLabel:SetText(Colorize(COLOR_ACCENT, GetString(SI_BMW_DETAIL_SEARCH_TITLE)))
+    else
+        titleLabel:SetText(Colorize(COLOR_ACCENT,
+            stringformat(GetString(SI_BMW_DETAIL_TITLE), currentCategoryName or "")))
+    end
 end
 
 function DetailWindow.Show(categoryId, categoryName)
@@ -215,10 +346,17 @@ function DetailWindow.Show(categoryId, categoryName)
     end
 
     currentCategoryId = categoryId
-    titleLabel:SetText(Colorize(COLOR_ACCENT,
-        stringformat(GetString(SI_BMW_DETAIL_TITLE), categoryName or "")))
+    currentCategoryName = categoryName
 
-    Populate(categoryId)
+    -- A fresh category open clears any prior search so the user sees the category
+    -- they clicked, not stale search results.
+    searchQuery = ""
+    suppressSearchEvent = true
+    searchBox:SetText("")
+    suppressSearchEvent = false
+
+    UpdateTitle()
+    Populate()
     windowControl:SetHidden(false)
     windowControl:BringWindowToTop()
 end
@@ -227,6 +365,23 @@ function DetailWindow.Hide()
     if windowControl then
         windowControl:SetHidden(true)
     end
+end
+
+-- Re-render the current view in place. Called from Valuation's coalesced refresh
+-- after a slot change (e.g. a withdrawal shrank a stack) so the Qty/Value columns
+-- stay truthful, and respects an active search. A no-op when the window is hidden.
+function DetailWindow.Refresh()
+    if not windowControl or windowControl:IsHidden() then
+        return
+    end
+    Populate()
+end
+
+-- The top-level control, exposed so the withdraw popup/queue can anchor to it
+-- (centered popup, queue magnetized to its right edge) rather than scattering
+-- floating windows. Returns nil before Initialize.
+function DetailWindow.GetWindowControl()
+    return windowControl
 end
 
 -- Hide the detail window when the craft bag closes, so it doesn't linger over

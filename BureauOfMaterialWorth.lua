@@ -5,7 +5,7 @@ local SAVED_VARIABLES_NAME = "BureauOfMaterialWorth_SavedVariables"
 BureauOfMaterialWorth = {
     name = ADDON_NAME,
     savedVariablesName = SAVED_VARIABLES_NAME,
-    version = "1.1.22060138",
+    version = "1.1.22061641",
     debugMode = 1,  -- 0=off, 1=errors, 2=warnings, 3=info, 4=verbose
 }
 
@@ -157,6 +157,10 @@ local function GetDetailWindowModule()
     return BureauOfMaterialWorth.DetailWindow
 end
 
+local function GetWithdrawDialogModule()
+    return BureauOfMaterialWorth.WithdrawDialog
+end
+
 -- Craft-bag visibility wiring
 -- ---------------------------------------------------------------------------
 -- The window is only meaningful while the craft bag is on screen, and -- per
@@ -189,6 +193,10 @@ local function OnCraftBagFragmentStateChange(oldState, newState)
         if detail then
             detail.OnCraftBagHidden()
         end
+        local withdraw = GetWithdrawDialogModule()
+        if withdraw then
+            withdraw.OnCraftBagHidden()
+        end
     end
 end
 
@@ -219,6 +227,9 @@ local function OnAddonLoaded(event, addonName)
     end
     if GetDetailWindowModule() then
         GetDetailWindowModule().Initialize()
+    end
+    if GetWithdrawDialogModule() then
+        GetWithdrawDialogModule().Initialize()
     end
     if GetValuationModule() then
         GetValuationModule().Initialize()

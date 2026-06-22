@@ -3,10 +3,11 @@
 A lightweight inventory addon for *The Elder Scrolls Online*. It sums the
 **market value of everything in your Craft Bag** and shows the total - with an
 optional breakdown by crafting profession - in a small panel beside the bag.
-The game itself only knows the worthless vendor price; this addon reads real
-trading prices through **LibPrice**, which transparently pulls from whichever
-price source you have installed (Master Merchant, Tamriel Trade Centre, or
-Arkadius' Trade Tools).
+It also lets you **search** your whole Craft Bag and **withdraw materials**
+straight into your backpack, one at a time or in batches. The game itself only
+knows the worthless vendor price; this addon reads real trading prices through
+**LibPrice**, which transparently pulls from whichever price source you have
+installed (Master Merchant, Tamriel Trade Centre, or Arkadius' Trade Tools).
 
 > **Compatibility:** API: LIVE 101050 · Requires [LibPrice](https://www.esoui.com/downloads/info2753.html)
 > (and a price source such as Master Merchant or Tamriel Trade Centre to read
@@ -22,11 +23,12 @@ total** in gold at the top, a subtitle with the slot, stack, and item counts, th
 a **per-profession breakdown** (Blacksmithing, Clothier, Woodworking, Jewelry,
 Alchemy, Enchanting, Provisioning, and an "Other" bucket). Hover any category for
 its value, slot count, stack count, item count, and how many slots have no price -
-or **click a category** to open a scrollable table of every material in it. A
-footer shows **how long ago** the figures were computed and whether **every slot
-has a price**. As you deposit or withdraw materials the total updates on its own.
-That's the whole addon - no gameplay changes, just an answer to "how much is all
-of this actually worth?".
+or **click a category** to open a scrollable table of every material in it. From
+that table you can **search across the whole Craft Bag** and **withdraw materials
+into your backpack** - one material at a time with quantity presets, or several at
+once through a withdraw queue. A footer shows **how long ago** the figures were
+computed and whether **every slot has a price**. As you deposit or withdraw
+materials the total updates on its own.
 
 > **A note on counts:** the Craft Bag stores each material in a single
 > unbounded slot, so the panel reports two distinct figures. **Slots** is the
@@ -69,6 +71,29 @@ of this actually worth?".
   figure reflects day-over-day market drift rather than noise.
 - The window is **movable** and closes with the Craft Bag, so it never lingers
   over the rest of your UI.
+
+### Search the whole Craft Bag
+- The material table has a **search box** that filters by name across *every*
+  category at once, not just the one you opened - type "ore", "rosin", "perfect"
+  and see every match in one list.
+- Matching is case-insensitive substring; clearing the box (or pressing Escape)
+  returns to the category you opened. Withdraw and queue work from search results
+  exactly as from a category.
+
+### Withdraw materials into your backpack
+- **Left-click any material** (in a category or in search results) to open a
+  withdraw popup: pick a quantity with the presets (1, 10, 100, and stack
+  multiples) or type an exact amount, then confirm. The popup shows your **free
+  backpack slots**, the **maximum you can withdraw** (clamped to what you hold and
+  to backpack space), and the **total gold value** of the amount chosen.
+- A **progress bar** tracks large withdrawals as the items actually arrive in your
+  backpack.
+- **Right-click materials** to add them to a **withdraw queue** - a list shown
+  below the table where you can set a per-material quantity, see the total value
+  and how many backpack slots the queue needs, and **withdraw everything at once**.
+- The **default quantity is keyed to item quality**, so a careless click cannot
+  dump a whole stack of something precious: cheap bulk mats default high, valuable
+  mats low. You can always raise it up to the maximum.
 
 ### Honest about its data
 - The footer is a compact two-column readout. **Updated** shows when the value
@@ -158,21 +183,26 @@ namespace, mirroring the structure of its sibling *Bureau of Acceptable Views*.
                  │
    BureauOfMaterialWorth.lua      Core: logging, chat, event wiring, slash command
                  │
-        ┌────────┼─────────────┐
-        ▼        ▼             ▼
-  Valuation.lua  Window.lua  DetailWindow.lua
-  scan · prices  anchored    per-category
-  aggregates     panel       material table
+        ┌────────┼────────────┬──────────────────┐
+        ▼        ▼            ▼                  ▼
+  Valuation.lua  Window.lua  DetailWindow.lua  WithdrawDialog.lua
+  scan · prices  anchored    per-category +     withdraw popup +
+  aggregates     panel       search table       queue + move engine
 ```
 
 - **`Valuation.lua`** owns all scanning, the per-item price cache, the per-slot
-  contribution cache, the running category/grand totals, and the per-material
-  price history. It is the only module that touches LibPrice or the Craft Bag
-  contents.
+  contribution cache, the running category/grand totals, the per-material
+  price history, the whole-bag search, and the backpack-capacity math. It is the
+  only module that touches LibPrice or the Craft Bag contents.
 - **`Window.lua`** is pure presentation: it reads already-computed totals and
   lays out the panel. It never scans or prices anything.
-- **`DetailWindow.lua`** is the scrollable per-category material table, opened by
-  clicking a category row; it reads its rows from `Valuation.lua` on demand.
+- **`DetailWindow.lua`** is the scrollable per-category material table (with the
+  whole-bag search box), opened by clicking a category row; it reads its rows from
+  `Valuation.lua` on demand and routes clicks to the withdraw dialog.
+- **`WithdrawDialog.lua`** is the single-material withdraw popup and the
+  multi-material withdraw queue, plus the shared move engine. It is the only
+  module that moves items (`RequestMoveItem` via `CallSecureProtected`, issued
+  synchronously from the confirming click).
 - The **core** wires the Craft Bag fragment's visibility to the valuation and
   window, filters the inventory update event to the Craft Bag, and exposes the
   `/bmw` slash command via an O(1) dispatch table.
@@ -186,7 +216,8 @@ namespace, mirroring the structure of its sibling *Bureau of Acceptable Views*.
 | `BureauOfMaterialWorth.lua` | Core: logging, chat, event wiring, Craft Bag visibility, slash commands. |
 | `Valuation.lua` | Craft Bag scan, LibPrice integration, price/slot caches, category aggregation, per-material price history. |
 | `Window.lua` | The panel anchored to the Craft Bag; renders the total and category rows. |
-| `DetailWindow.lua` | The scrollable per-category material table opened by clicking a category row. |
+| `DetailWindow.lua` | The scrollable per-category material table (with whole-bag search) opened by clicking a category row. |
+| `WithdrawDialog.lua` | The single-material withdraw popup, the multi-material withdraw queue, and the shared item-move engine. |
 | `Settings.lua` | SavedVariables, defaults, and the LibAddonMenu panel. |
 
 ---

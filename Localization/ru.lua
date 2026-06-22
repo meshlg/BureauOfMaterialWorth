@@ -62,6 +62,30 @@ local strings = {
     [SI_BMW_DETAIL_GROWTH] = "%s%%",
     [SI_BMW_DETAIL_GROWTH_NEW] = "-",
     [SI_BMW_DETAIL_EMPTY] = "В этой категории нет материалов.",
+    [SI_BMW_DETAIL_SEARCH_HINT] = "Поиск...",
+    [SI_BMW_DETAIL_SEARCH_TITLE] = "Результаты поиска",
+
+    -- Withdraw dialog
+    [SI_BMW_WITHDRAW_TITLE] = "Извлечь: %s",
+    [SI_BMW_WITHDRAW_FREE_SLOTS] = "Свободных ячеек в сумке: %d",
+    [SI_BMW_WITHDRAW_MAX] = "Максимум к извлечению: %s",
+    [SI_BMW_WITHDRAW_TOTAL_VALUE] = "Общая стоимость: %s",
+    [SI_BMW_WITHDRAW_QTY_LABEL] = "Количество",
+    [SI_BMW_WITHDRAW_PRESET_STACK] = "%d стак",
+    [SI_BMW_WITHDRAW_PRESET_STACKS] = "%d стаков",
+    [SI_BMW_WITHDRAW_CONFIRM] = "Извлечь",
+    [SI_BMW_WITHDRAW_CANCEL] = "Отмена",
+    [SI_BMW_WITHDRAW_BACKPACK_FULL] = "Сумка переполнена",
+    [SI_BMW_WITHDRAW_PROGRESS] = "Извлечение... %d / %d",
+    [SI_BMW_WITHDRAW_HINT] = "ЛКМ: извлечь    ПКМ: в очередь",
+
+    -- Withdraw queue
+    [SI_BMW_QUEUE_TITLE] = "Очередь извлечения",
+    [SI_BMW_QUEUE_EMPTY] = "Нажмите ПКМ на материалах, чтобы добавить их в очередь.",
+    [SI_BMW_QUEUE_SLOTS] = "Нужно ячеек: %d / свободно %d",
+    [SI_BMW_QUEUE_TOTAL] = "Стоимость очереди: %s",
+    [SI_BMW_QUEUE_WITHDRAW_ALL] = "Извлечь всё",
+    [SI_BMW_QUEUE_CLEAR] = "Очистить",
 
     -- Window: footer (two-column label -> value rows)
     [SI_BMW_FOOTER_UPDATED_LABEL] = "Обновлено",

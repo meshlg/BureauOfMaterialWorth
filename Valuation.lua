@@ -14,7 +14,13 @@ local GetItemId                 = GetItemId
 local GetItemLink               = GetItemLink
 local GetItemLinkItemType       = GetItemLinkItemType
 local ZO_GetNextBagSlotIndex    = ZO_GetNextBagSlotIndex
+local GetNumBagFreeSlots        = GetNumBagFreeSlots
 local LibPrice                  = LibPrice
+
+-- The player's normal inventory: the destination for craft-bag withdrawals and
+-- the bag the backpack-capacity helper scans. Bound here alongside BAG_VIRTUAL
+-- so the capacity scan is upvalue reads like the rest of the hot path.
+local BAG_BACKPACK              = BAG_BACKPACK
 
 -- Display-field + price-history helpers, only touched lazily when the detail
 -- window is opened (never on the per-slot scan path), but bound here for
@@ -27,6 +33,8 @@ local GetTimeStamp                = GetTimeStamp
 local zo_round                    = zo_round
 local zo_strformat                = zo_strformat
 local tablesort                   = table.sort
+local stringlower                 = string.lower
+local stringfind                  = string.find
 
 local BAG = BAG_VIRTUAL
 
@@ -417,6 +425,14 @@ local function RefreshWindow()
     if window and isBagVisible then
         window.Update()
     end
+
+    -- A withdrawal shrinks the craft-bag stack, so the open detail table would
+    -- otherwise show stale Qty/Value. Refresh it too; it is a no-op when the
+    -- detail window is hidden, and rides the same coalescing as the panel.
+    local detail = addon.DetailWindow
+    if detail and detail.Refresh then
+        detail.Refresh()
+    end
 end
 
 -- Collapse a burst of slot updates into a single window refresh.
@@ -633,6 +649,37 @@ function Valuation.GetStatus()
     return grandGold, grandSlots - grandUnpricedSlots, grandUnpricedSlots
 end
 
+-- How many items of `itemId` the backpack can currently absorb, used by the
+-- withdraw dialog to show the max-withdrawable figure and to clamp the requested
+-- quantity. It is the sum of two things:
+--   1. the room left in any partial stack of the same item already in the
+--      backpack (each capped at STACK_SIZE), since a withdrawal tops those up
+--      before consuming an empty slot, and
+--   2. STACK_SIZE for every free backpack slot (each can hold a fresh 200).
+-- Read-only: it scans BAG_BACKPACK but touches none of the craft-bag aggregates.
+-- The caller clamps this against the craft-bag source stack, so the returned
+-- figure is purely the destination-side cap.
+function Valuation.GetBackpackCapacityFor(itemId)
+    if not itemId or itemId <= 0 then
+        return 0
+    end
+
+    local capacity = 0
+    local slotIndex = ZO_GetNextBagSlotIndex(BAG_BACKPACK)
+    while slotIndex do
+        if GetItemId(BAG_BACKPACK, slotIndex) == itemId then
+            local size = GetSlotStackSize(BAG_BACKPACK, slotIndex)
+            if size and size > 0 and size < STACK_SIZE then
+                capacity = capacity + (STACK_SIZE - size)
+            end
+        end
+        slotIndex = ZO_GetNextBagSlotIndex(BAG_BACKPACK, slotIndex)
+    end
+
+    capacity = capacity + GetNumBagFreeSlots(BAG_BACKPACK) * STACK_SIZE
+    return capacity
+end
+
 -- Detail-window data + price history
 -- ---------------------------------------------------------------------------
 -- Everything below is touched ONLY when the user opens the per-category detail
@@ -679,56 +726,100 @@ local function ResolvePriceGrowth(itemId, curUnit)
     return growthPercent, growthDir, isNew
 end
 
--- Per-material rows for one category, built lazily on detail-window open. O(slots)
--- to filter slotInfo plus a GetItemLink* resolve per matching slot; runs once per
--- click, not on the scan path. Returns an array sorted alphabetically by name:
---   { itemId, name, icon, quality, count, gold, unitPrice, priced,
---     growthPercent, growthDir, isNew }
--- Relies on craft-bag slots being valid, which holds because the detail window
--- is only reachable from the panel, shown only while the craft bag is open.
-function Valuation.GetCategoryMaterials(categoryId)
-    local materials = {}
-
-    for slotIndex, info in pairs(slotInfo) do
-        if info.category == categoryId then
-            local itemLink = GetItemLink(BAG, slotIndex)
-            local quality = GetItemLinkFunctionalQuality(itemLink)
-            local unitPrice
-            if info.stack and info.stack > 0 then
-                unitPrice = info.value / info.stack
-            else
-                unitPrice = 0
-            end
-
-            local growthPercent, growthDir, isNew = ResolvePriceGrowth(info.itemId, info.priced and unitPrice or nil)
-
-            materials[#materials + 1] = {
-                itemId = info.itemId,
-                -- GetItemLinkName returns the raw, unformatted name (often
-                -- lower-case in the client's data, e.g. "rubedite ore"); the
-                -- game title-cases and cleans it via zo_strformat before
-                -- display, so do the same here or names render lower-case.
-                name = zo_strformat(SI_TOOLTIP_ITEM_NAME, GetItemLinkName(itemLink)),
-                icon = GetItemLinkIcon(itemLink),
-                quality = quality,
-                count = info.stack,
-                gold = info.value,
-                unitPrice = unitPrice,
-                priced = info.priced,
-                growthPercent = growthPercent,
-                growthDir = growthDir,
-                isNew = isNew,
-            }
-        end
+-- Build one display row from a slot's cached info. Resolves the heavier display
+-- fields (name/icon/quality) and the price-growth figure lazily from the item
+-- link; shared by GetCategoryMaterials and GetMaterialsMatching so the row shape
+-- stays identical. See those functions for the returned field list.
+local function BuildMaterialRow(slotIndex, info)
+    local itemLink = GetItemLink(BAG, slotIndex)
+    local quality = GetItemLinkFunctionalQuality(itemLink)
+    local unitPrice
+    if info.stack and info.stack > 0 then
+        unitPrice = info.value / info.stack
+    else
+        unitPrice = 0
     end
 
+    local growthPercent, growthDir, isNew = ResolvePriceGrowth(info.itemId, info.priced and unitPrice or nil)
+
+    return {
+        itemId = info.itemId,
+        -- The craft-bag slot this material occupies. Exposed so the withdraw
+        -- dialog can issue RequestMoveItem against the right source slot. A
+        -- material is held in exactly one craft-bag slot, so this
+        -- itemId -> slotIndex mapping is 1:1 for the run.
+        slotIndex = slotIndex,
+        -- GetItemLinkName returns the raw, unformatted name (often lower-case in
+        -- the client's data, e.g. "rubedite ore"); the game title-cases and
+        -- cleans it via zo_strformat before display, so do the same here or
+        -- names render lower-case.
+        name = zo_strformat(SI_TOOLTIP_ITEM_NAME, GetItemLinkName(itemLink)),
+        icon = GetItemLinkIcon(itemLink),
+        quality = quality,
+        count = info.stack,
+        gold = info.value,
+        unitPrice = unitPrice,
+        priced = info.priced,
+        growthPercent = growthPercent,
+        growthDir = growthDir,
+        isNew = isNew,
+    }
+end
+
+-- Sort material rows alphabetically by name, breaking ties by itemId so the
+-- order is stable across rebuilds.
+local function SortMaterialsByName(materials)
     tablesort(materials, function(a, b)
         if a.name ~= b.name then
             return a.name < b.name
         end
         return a.itemId < b.itemId
     end)
+end
 
+-- Per-material rows for one category, built lazily on detail-window open. O(slots)
+-- to filter slotInfo plus a GetItemLink* resolve per matching slot; runs once per
+-- click, not on the scan path. Returns an array sorted alphabetically by name:
+--   { itemId, slotIndex, name, icon, quality, count, gold, unitPrice, priced,
+--     growthPercent, growthDir, isNew }
+-- slotIndex is the craft-bag source slot, carried through so the withdraw dialog
+-- can move the material out. Relies on craft-bag slots being valid, which holds
+-- because the detail window is only reachable from the panel, shown only while
+-- the craft bag is open.
+function Valuation.GetCategoryMaterials(categoryId)
+    local materials = {}
+
+    for slotIndex, info in pairs(slotInfo) do
+        if info.category == categoryId then
+            materials[#materials + 1] = BuildMaterialRow(slotIndex, info)
+        end
+    end
+
+    SortMaterialsByName(materials)
+    return materials
+end
+
+-- Per-material rows across the WHOLE craft bag whose name contains `query`
+-- (case-insensitive substring), for the detail window's search box. Same row
+-- shape and sort as GetCategoryMaterials. An empty/nil query returns nothing, so
+-- the caller can treat "no query" as "not searching" rather than "match all".
+-- O(slots) with a name resolve per slot; runs once per keystroke (debounced by
+-- the caller), never on the scan path.
+function Valuation.GetMaterialsMatching(query)
+    local materials = {}
+    if not query or query == "" then
+        return materials
+    end
+
+    local needle = stringlower(query)
+    for slotIndex, info in pairs(slotInfo) do
+        local name = zo_strformat(SI_TOOLTIP_ITEM_NAME, GetItemLinkName(GetItemLink(BAG, slotIndex)))
+        if stringfind(stringlower(name), needle, 1, true) then
+            materials[#materials + 1] = BuildMaterialRow(slotIndex, info)
+        end
+    end
+
+    SortMaterialsByName(materials)
     return materials
 end
 
