@@ -474,7 +474,7 @@ local function FullRescan()
 
     lastScanTimeMs = GetGameTimeMilliseconds()
     isDirty = false
-    LogInfo(SI_BMW_LOG_RESCAN_DONE, scanned, ZO_LocalizeDecimalNumber(grandGold))
+    LogInfo(SI_BMW_LOG_RESCAN_DONE, scanned, ZO_LocalizeDecimalNumber(zo_round(grandGold)))
 end
 
 local function RefreshWindow()
@@ -525,7 +525,7 @@ local function OnSingleSlotUpdate(eventCode, bagId, slotIndex, isNewItem, soundC
     local info = ComputeSlot(slotIndex)
     AddSlotToAggregates(slotIndex, info)
     lastScanTimeMs = GetGameTimeMilliseconds()
-    LogDebug(SI_BMW_LOG_SLOT_UPDATED, slotIndex, ZO_LocalizeDecimalNumber(info and info.value or 0))
+    LogDebug(SI_BMW_LOG_SLOT_UPDATED, slotIndex, ZO_LocalizeDecimalNumber(zo_round(info and info.value or 0)))
 
     QueueWindowRefresh()
 end

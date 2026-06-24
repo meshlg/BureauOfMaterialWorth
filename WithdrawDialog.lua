@@ -498,6 +498,16 @@ local function InitializePopup()
     -- this does not become a rejected third anchor.
     editBg:ClearAnchors()
     editBg:SetAnchor(LEFT, qtyLabel, RIGHT, 8, 0)
+    -- Clicking anywhere on the backdrop (incl. its padding) focuses the editbox,
+    -- so the whole field is the hit target, not just the glyphs. Without this the
+    -- box reads as "locked" because a custom (non-dialog) editbox does not grab
+    -- focus on click on its own. Mirrors the detail window's search field.
+    editBg:SetMouseEnabled(true)
+    editBg:SetHandler("OnMouseUp", function()
+        if popupEdit then
+            popupEdit:TakeFocus()
+        end
+    end)
 
     popupEdit = WINDOW_MANAGER:CreateControl(addon.name .. "_WithdrawEdit", editBg, CT_EDITBOX)
     popupEdit:SetAnchor(TOPLEFT, editBg, TOPLEFT, 8, 2)
@@ -506,11 +516,22 @@ local function InitializePopup()
     popupEdit:SetMaxInputChars(7)
     popupEdit:SetMouseEnabled(true)
     popupEdit:SetTextType(TEXT_TYPE_NUMERIC)
+    -- Take focus on click so typing an exact amount (e.g. 17) works; some custom
+    -- editboxes do not auto-focus reliably.
+    popupEdit:SetHandler("OnMouseUp", function(self)
+        self:TakeFocus()
+    end)
     popupEdit:SetHandler("OnTextChanged", function()
         if suppressEditEvent then
             return
         end
         SetRequested(popupEdit:GetText())
+    end)
+    -- Enter commits the withdrawal, so typing an exact amount and pressing Enter
+    -- works without reaching for the Confirm button.
+    popupEdit:SetHandler("OnEnter", function(self)
+        self:LoseFocus()
+        WithdrawDialog.Confirm()
     end)
     y = y + BUTTON_HEIGHT + SECTION_GAP
 
