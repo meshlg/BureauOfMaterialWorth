@@ -24,6 +24,10 @@ local strings = {
     SI_BMW_SETTING_BACKGROUND_TOOLTIP = "Draw the dark panel background behind the text. Turn off for plain floating text over the Craft Bag.",
     SI_BMW_SETTING_BORDER_NAME = "Show border",
     SI_BMW_SETTING_BORDER_TOOLTIP = "Draw the panel's border edge. Turn off for a cleaner, frameless look.",
+    SI_BMW_SETTING_VALUE_HISTORY_NAME = "Show value history",
+    SI_BMW_SETTING_VALUE_HISTORY_TOOLTIP = "Draw a small sparkline of your Craft Bag's total value over time at the bottom of the panel. One point is recorded each time you open the Craft Bag (at most once every few hours), keeping the last 90 points. Hover the sparkline for the oldest, newest, and net-change figures.",
+    SI_BMW_SETTING_NOTIFY_VISIT_NAME = "Announce value in chat",
+    SI_BMW_SETTING_NOTIFY_VISIT_TOOLTIP = "Print your Craft Bag's value to chat the first time you open it each session, along with how much it changed since your last visit (when the stock changed). Turn off for no chat output.",
     SI_BMW_SETTING_WIDTH_NAME = "Window width",
     SI_BMW_SETTING_WIDTH_TOOLTIP = "Width of the value panel in pixels. Increase it if long category names or large gold figures look cramped.",
     SI_BMW_SETTING_OFFSET_X_NAME = "Horizontal offset",
@@ -105,6 +109,12 @@ local strings = {
     SI_BMW_FOOTER_DELTA_LABEL = "This visit",
     SI_BMW_FOOTER_DELTA_LABEL_SESSION = "This session",
     SI_BMW_FOOTER_DELTA_VALUE = "%s gold",
+    -- Value-history sparkline caption + hover tooltip.
+    SI_BMW_FOOTER_HISTORY_LABEL = "Value history",
+    SI_BMW_HISTORY_TOOLTIP_POINTS = "Recorded points: %d",
+    SI_BMW_HISTORY_TOOLTIP_OLDEST = "Oldest: %s gold",
+    SI_BMW_HISTORY_TOOLTIP_NEWEST = "Newest: %s gold",
+    SI_BMW_HISTORY_TOOLTIP_CHANGE = "Change: %s gold",
 
     -- Window: relative time
     SI_BMW_TIME_NEVER = "never",
@@ -154,6 +164,10 @@ local strings = {
     SI_BMW_MSG_VERSION_DEBUG = "Version %s | Debug: %s (%d)",
     SI_BMW_MSG_STATUS_TOTAL = "Craft Bag value: %s gold.",
     SI_BMW_MSG_STATUS_SLOTS = "Priced slots: %d | unpriced slots: %d.",
+    -- First-open-of-session announcement. _DELTA: %s sign (+/-), %s change
+    -- magnitude, %s current total. _TOTAL: %s current total (no known change).
+    SI_BMW_MSG_VISIT_DELTA = "Craft Bag is worth %s gold (%s%s since last visit).",
+    SI_BMW_MSG_VISIT_TOTAL = "Craft Bag is worth %s gold.",
     SI_BMW_MSG_REFRESH_DONE = "Prices refreshed.",
     SI_BMW_MSG_DEBUG_MODE_SET = "Debug mode set to %s (%d).",
     SI_BMW_MSG_INVALID_DEBUG_LEVEL = "Invalid debug level. Use a number from 0 to 4.",

@@ -8,6 +8,7 @@ local GetString = GetString
 local stringformat = string.format
 local zo_round = zo_round
 local mathabs = math.abs
+local tablesort = table.sort
 
 -- Palette (shared house style with Window.lua). Kept as a local copy rather than
 -- reaching into Window.lua's locals so the two presentation modules stay
@@ -17,6 +18,13 @@ local COLOR_MUTED  = "8C8A82"  -- dim grey: headers / secondary
 local COLOR_GOLD   = "F4D03F"  -- soft gold: gold figures
 local COLOR_GAIN   = "8FCB9F"  -- green: positive price change
 local COLOR_LOSS   = "D08A8A"  -- soft red: negative price change
+
+-- COLOR_MUTED (8C8A82) as normalized RGB, for the column headers. They are sort
+-- toggles whose tone is set via SetColor rather than an inline |c code, so the
+-- hover handlers can brighten one to white without fighting an embedded color.
+local HEADER_MUTED_R = 0.549
+local HEADER_MUTED_G = 0.541
+local HEADER_MUTED_B = 0.510
 
 local GOLD_ICON = "|t16:16:EsoUI/Art/currency/currency_gold.dds|t"
 -- Same sort-arrow textures Window.lua uses for its delta, for the same reason:
@@ -60,10 +68,20 @@ local searchBox       -- the search editbox
 local searchQuery = ""  -- current search text; "" means "show the category"
 local suppressSearchEvent = false  -- guards the search box against its own SetText
 
+-- Column sort state. The list is re-sorted in Populate() before it fills, so it
+-- applies equally to a category view, the whole-bag search, and a live refresh.
+-- Default to value-descending: the practical "what to sell right now" order, so
+-- the stacks that make up most of the bag's worth sit at the top on open.
+--   sortKey: "name" | "qty" | "value" | "change"
+--   sortAsc: ascending when true. Numeric columns default to descending (biggest
+--            first); the name column defaults to ascending (A->Z).
+local sortKey = "value"
+local sortAsc = false
+
 -- Forward declarations so the search-box handlers built in Initialize can
 -- capture these as upvalues; they are defined (as plain assignments) further
 -- down, after Initialize.
-local FillList, Populate, UpdateTitle
+local FillList, Populate, UpdateTitle, UpdateHeaders
 
 -- Populate one recycled row from its material record. Mirrors the column
 -- geometry declared in DetailWindow.xml.
@@ -269,6 +287,41 @@ function DetailWindow.Initialize()
     headerName:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING + 2, headerY)
     headerName:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_DETAIL_COL_NAME)))
 
+    -- Make each header a sort toggle. Clicking the active column flips its
+    -- direction; clicking another switches to it with a sensible default (A->Z
+    -- for the name, biggest-first for the numeric columns - that is what a
+    -- player scanning for "what to sell" wants). Numeric columns default to
+    -- descending; the name column to ascending. The headers are plain labels, so
+    -- enable mouse and bind OnMouseUp directly; the existing right-aligned
+    -- geometry already gives each a generous hit box.
+    local function WireHeaderSort(headerControl, key, defaultAsc)
+        headerControl:SetMouseEnabled(true)
+        headerControl:SetHandler("OnMouseUp", function(_, button, upInside)
+            if not upInside or button ~= MOUSE_BUTTON_INDEX_LEFT then
+                return
+            end
+            if sortKey == key then
+                sortAsc = not sortAsc
+            else
+                sortKey = key
+                sortAsc = defaultAsc
+            end
+            UpdateHeaders()
+            Populate()
+        end)
+        headerControl:SetHandler("OnMouseEnter", function(self)
+            self:SetColor(1, 1, 1, 1)
+        end)
+        headerControl:SetHandler("OnMouseExit", function()
+            UpdateHeaders()
+        end)
+    end
+    WireHeaderSort(headerName, "name", true)
+    WireHeaderSort(headerQty, "qty", false)
+    WireHeaderSort(headerValue, "value", false)
+    WireHeaderSort(headerChange, "change", false)
+    UpdateHeaders()
+
     -- Divider under the headers.
     local dividerY = headerY + HEADER_HEIGHT
     divider = WINDOW_MANAGER:CreateControl(addon.name .. "_DetailDivider", windowControl, CT_TEXTURE)
@@ -316,17 +369,75 @@ function FillList(materials)
     emptyLabel:SetHidden(#materials > 0)
 end
 
+-- Re-sort the material rows in place by the active column. The Valuation getters
+-- already return rows sorted by name; this overrides that with the user's chosen
+-- column. Name ties (and ties on any numeric column) fall back to name then
+-- itemId so the order is stable across rebuilds and the value/change views read
+-- alphabetically within equal figures.
+--
+-- Unpriced rows carry gold = 0 and growthPercent = nil. On the numeric columns
+-- they always sink to the bottom regardless of direction, so toggling a column
+-- never buries a real figure beneath the priceless ones.
+local function SortMaterials(materials)
+    if sortKey == "name" then
+        tablesort(materials, function(a, b)
+            if a.name ~= b.name then
+                if sortAsc then return a.name < b.name end
+                return a.name > b.name
+            end
+            return a.itemId < b.itemId
+        end)
+        return
+    end
+
+    tablesort(materials, function(a, b)
+        local av, bv
+        if sortKey == "qty" then
+            av, bv = a.count or 0, b.count or 0
+        elseif sortKey == "change" then
+            -- Unpriced or no-baseline rows have no comparable change; treat as
+            -- the lowest so they sink. nil < any real percentage.
+            av = (a.priced and not a.isNew) and a.growthPercent or nil
+            bv = (b.priced and not b.isNew) and b.growthPercent or nil
+        else  -- "value"
+            av, bv = a.gold or 0, b.gold or 0
+        end
+
+        -- Push nils to the bottom irrespective of sort direction.
+        if av == nil or bv == nil then
+            if av == bv then
+                return a.name < b.name
+            end
+            return bv == nil
+        end
+
+        if av ~= bv then
+            if sortAsc then return av < bv end
+            return av > bv
+        end
+        -- Stable tie-break: alphabetical, then itemId.
+        if a.name ~= b.name then
+            return a.name < b.name
+        end
+        return a.itemId < b.itemId
+    end)
+end
+
 -- Rebuild the scroll list for the current view: the whole-bag search results
 -- when a query is active, otherwise the current category. Centralized so the
 -- search box, a category open, and the live refresh all route through one place.
 function Populate()
+    local materials
     if searchQuery ~= "" then
-        FillList(addon.Valuation.GetMaterialsMatching(searchQuery))
+        materials = addon.Valuation.GetMaterialsMatching(searchQuery)
     elseif currentCategoryId then
-        FillList(addon.Valuation.GetCategoryMaterials(currentCategoryId))
+        materials = addon.Valuation.GetCategoryMaterials(currentCategoryId)
     else
-        FillList({})
+        materials = {}
     end
+
+    SortMaterials(materials)
+    FillList(materials)
 end
 
 -- Keep the title in step with the view: the searched-across-bag label while a
@@ -338,6 +449,28 @@ function UpdateTitle()
         titleLabel:SetText(Colorize(COLOR_ACCENT,
             stringformat(GetString(SI_BMW_DETAIL_TITLE), currentCategoryName or "")))
     end
+end
+
+-- Re-label the four column headers, appending a sort arrow to the active one so
+-- the player can see which column orders the list and in which direction. The
+-- arrow textures match the price-change column's idiom (the UI font won't render
+-- the Unicode triangles). Tone is driven by SetColor (not an inline |c code) so
+-- the hover handlers can brighten a header without fighting an embedded color.
+-- Called after any sort-state change and on each open.
+function UpdateHeaders()
+    local arrow = sortAsc and ARROW_UP or ARROW_DOWN
+    local function apply(headerControl, stringId, key)
+        local text = GetString(stringId)
+        if sortKey == key then
+            text = text .. " " .. arrow
+        end
+        headerControl:SetText(text)
+        headerControl:SetColor(HEADER_MUTED_R, HEADER_MUTED_G, HEADER_MUTED_B, 1)
+    end
+    apply(headerName, SI_BMW_DETAIL_COL_NAME, "name")
+    apply(headerQty, SI_BMW_DETAIL_COL_QTY, "qty")
+    apply(headerValue, SI_BMW_DETAIL_COL_VALUE, "value")
+    apply(headerChange, SI_BMW_DETAIL_COL_CHANGE, "change")
 end
 
 function DetailWindow.Show(categoryId, categoryName)
@@ -355,6 +488,12 @@ function DetailWindow.Show(categoryId, categoryName)
     searchBox:SetText("")
     suppressSearchEvent = false
 
+    -- Start every open from the value-descending default - the "what to sell
+    -- right now" order - regardless of how the previous view was sorted.
+    sortKey = "value"
+    sortAsc = false
+
+    UpdateHeaders()
     UpdateTitle()
     Populate()
     windowControl:SetHidden(false)

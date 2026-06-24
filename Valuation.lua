@@ -31,6 +31,7 @@ local GetItemLinkFunctionalQuality = GetItemLinkFunctionalQuality
 local GetItemQualityColor         = GetItemQualityColor
 local GetTimeStamp                = GetTimeStamp
 local zo_round                    = zo_round
+local mathabs                     = math.abs
 local zo_strformat                = zo_strformat
 local tablesort                   = table.sort
 local stringlower                 = string.lower
@@ -59,6 +60,20 @@ local STACK_SIZE = 200
 local RECORD_INTERVAL_SECONDS = 20 * 60 * 60   -- ~20h
 local PRUNE_MAX_AGE_SECONDS   = 30 * 24 * 60 * 60  -- 30 days
 
+-- Grand-total value history (the footer sparkline)
+-- ---------------------------------------------------------------------------
+-- One sample of the whole-bag valuation is recorded per craft-bag open, into a
+-- fixed-size ring buffer in savedVars (valueHistory). The ring is capacity-
+-- bounded so it can never grow without limit -- old samples are overwritten in
+-- place rather than shifted, so a write is O(1) and there is nothing to prune.
+-- VALUE_HISTORY_MIN_INTERVAL collapses an "open/close/open" burst into a single
+-- moving sample: within the window the latest open just updates the newest
+-- point instead of appending, so the sparkline keeps a meaningful time scale
+-- rather than filling with points minutes apart.
+local VALUE_HISTORY_CAPACITY     = 90
+local VALUE_HISTORY_MIN_INTERVAL = 4 * 60 * 60  -- ~4h
+
+
 local zo_ceil = zo_ceil
 
 -- Number of classic 200-item stacks a raw item count occupies. 0 items -> 0
@@ -72,6 +87,7 @@ end
 
 local LogDebug = private.LogDebug
 local LogInfo = private.LogInfo
+local ChatInfo = private.ChatInfo
 
 -- Human-readable names for LibPrice source keys (the second return of
 -- ItemLinkToPriceGold). LibPrice has no built-in display-name map, so we keep
@@ -248,10 +264,51 @@ local grandUnpricedSlots = 0
 local deltaSinceLastVisit = nil
 local sessionBaseGold = nil   -- session-mode baseline: gold at first open this session
 local sessionBaseItems = nil  -- session-mode baseline: item count alongside it
+local visitNotified = false   -- emitted the "since last visit" chat line yet this session?
 
 local lastScanTimeMs = nil  -- GetGameTimeMilliseconds() of the last full/partial recompute
 local isDirty = true        -- valuation may be stale; rescan on next show
 local isBagVisible = false
+
+-- Append the current grand total to the value-history ring buffer. Called once
+-- per craft-bag open (after the delta block, so grandGold/grandItems are the
+-- just-computed figures). The buffer never shifts: `head` is the index of the
+-- newest sample and writes wrap modulo VALUE_HISTORY_CAPACITY, overwriting the
+-- oldest entry once full. A new open within VALUE_HISTORY_MIN_INTERVAL of the
+-- newest sample updates that sample in place instead of appending, so a rapid
+-- open/close/open burst stays one point and the sparkline keeps a real time
+-- scale. No-op without savedVars (pre-init) so it is safe to call unguarded.
+local function RecordValuePoint()
+    local sv = private.savedVars
+    if not sv then
+        return
+    end
+
+    local hist = sv.valueHistory
+    if not hist or type(hist) ~= "table" then
+        hist = { head = 0, entries = {} }
+        sv.valueHistory = hist
+    end
+    -- An older save (or a partially-defaulted table) may lack either field.
+    hist.entries = hist.entries or {}
+    hist.head = hist.head or 0
+
+    local now = GetTimeStamp()
+    local newest = hist.head > 0 and hist.entries[hist.head] or nil
+    if newest and newest.t and (now - newest.t) < VALUE_HISTORY_MIN_INTERVAL then
+        -- Still inside the same sampling window: move the newest point forward
+        -- rather than adding a near-duplicate.
+        newest.t = now
+        newest.gold = grandGold
+        newest.items = grandItems
+        return
+    end
+
+    local nextHead = (hist.head % VALUE_HISTORY_CAPACITY) + 1
+    hist.entries[nextHead] = { t = now, gold = grandGold, items = grandItems }
+    hist.head = nextHead
+end
+
 
 -- Coalesced refresh: a burst of slot updates (e.g. dumping a 200-item stack,
 -- which fires per-slot events) should yield ONE window refresh, not one per
@@ -549,6 +606,28 @@ function Valuation.OnCraftBagShown()
     else
         deltaSinceLastVisit = nil
     end
+
+    -- First open of the session: optionally announce the bag's value (and the
+    -- since-last-visit change, when there is one) in chat. Gated on its own
+    -- setting (on by default) and a once-per-session flag so it fires at login,
+    -- not on every reopen. The delta line is omitted when there's no baseline or
+    -- the stock is unchanged -- same gating as the footer, so the chat never
+    -- shows a misleading change.
+    if not visitNotified then
+        visitNotified = true
+        if not sv or sv.notifyOnVisit ~= false then
+            local total = ZO_LocalizeDecimalNumber(zo_round(grandGold))
+            if deltaSinceLastVisit and deltaSinceLastVisit ~= 0 then
+                local sign = deltaSinceLastVisit > 0 and "+" or "-"
+                local magnitude = ZO_LocalizeDecimalNumber(zo_round(mathabs(deltaSinceLastVisit)))
+                ChatInfo(SI_BMW_MSG_VISIT_DELTA, total, sign, magnitude)
+            else
+                ChatInfo(SI_BMW_MSG_VISIT_TOTAL, total)
+            end
+        end
+    end
+
+    RecordValuePoint()
 end
 
 function Valuation.OnCraftBagHidden()
@@ -647,6 +726,32 @@ end
 
 function Valuation.GetStatus()
     return grandGold, grandSlots - grandUnpricedSlots, grandUnpricedSlots
+end
+
+-- The value-history samples in chronological order (oldest -> newest), each
+-- { t = unix, gold, items }. The ring stores them out of array order (writes
+-- wrap around head), so this walks from the oldest slot forward to linearize
+-- them for the sparkline. O(stored points), called once per window render --
+-- never on the scan path. Returns an empty array when nothing is recorded yet.
+function Valuation.GetValueHistory()
+    local sv = private.savedVars
+    local hist = sv and sv.valueHistory
+    if not hist or not hist.entries or (hist.head or 0) == 0 then
+        return {}
+    end
+
+    local entries = hist.entries
+    local count = #entries
+    local head = hist.head
+    local out = {}
+    -- Before the ring fills, slots 1..head are in order and head == count, so
+    -- the walk below degenerates to 1..count. Once full, head is somewhere in
+    -- the middle and the oldest sample sits at head+1 (wrapping).
+    for offset = 1, count do
+        local idx = (head + offset - 1) % count + 1
+        out[#out + 1] = entries[idx]
+    end
+    return out
 end
 
 -- How many items of `itemId` the backpack can currently absorb, used by the

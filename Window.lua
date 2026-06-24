@@ -45,6 +45,20 @@ local SECTION_GAP    = 6    -- small gap between blocks
 local BG_ALPHA       = 0.82
 local EDGE_ALPHA     = 0.9  -- border opacity when the border is shown
 
+-- Value-history sparkline geometry. The sparkline is a strip of vertical bars
+-- (one per recorded sample) drawn under a small caption in the footer. Bars are
+-- CT_BACKDROP fills -- the same primitive the window background uses -- because
+-- the UI font can't render the Unicode block glyphs a text sparkline would need
+-- (see the arrow note above). SPARK_MIN_BAR_H keeps the lowest sample a visible
+-- sliver rather than nothing.
+local SPARK_HEIGHT     = 30  -- bar-strip height in px (the caption sits above it)
+local SPARK_BAR_GAP    = 1   -- horizontal gap between bars
+local SPARK_MIN_BAR_H  = 2   -- floor height so the minimum sample still draws
+-- Past samples in dim gold, the newest in bright gold so "now" stands out.
+-- RGBA floats (CT_BACKDROP wants components, not the hex the labels use).
+local SPARK_BAR_COLOR     = { 0.72, 0.65, 0.40, 0.90 }
+local SPARK_BAR_COLOR_NOW = { 0.96, 0.82, 0.25, 1.00 }
+
 -- Expose the width bounds so the settings slider stays in sync with the layout.
 Window.DEFAULT_WIDTH = DEFAULT_WINDOW_WIDTH
 Window.MIN_WIDTH = MIN_WINDOW_WIDTH
@@ -153,6 +167,12 @@ local dividerBottom   -- line above the footer
 local footerUpdatedRow  -- "Updated" -> "<ago>"
 local footerPricesRow   -- "Coverage" -> "<n>/<n> · <source>" (or a warning)
 local footerDeltaRow    -- "This visit"/"This session" -> "▲ <gold>" (hidden when none)
+-- Value-history sparkline: a caption label + a container holding pooled bar
+-- controls. The bars are created on demand and reused across renders (like the
+-- category rows), so a refresh re-points them instead of churning controls.
+local sparkCaption      -- muted "Value history" caption above the bars
+local sparkContainer    -- holds the bar strip; anchors the per-sample bars
+local sparkBars = {}    -- pooled CT_BACKDROP bars, index 1..N
 local rowPool         -- reusable category rows { container, name, gold, data }
 
 -- Footer "updated X ago" should feel live even when nothing else changes, so a
@@ -344,6 +364,50 @@ function Window.Initialize()
     footerUpdatedRow = CreateFooterRow(addon.name .. "_FooterUpdated")
     footerPricesRow = CreateFooterRow(addon.name .. "_FooterPrices")
     footerDeltaRow = CreateFooterRow(addon.name .. "_FooterDelta")
+
+    -- Value-history sparkline: a muted caption with the bar strip beneath it.
+    -- The bars themselves are created lazily by RenderSparkline so the strip is
+    -- sized to whatever data exists.
+    sparkCaption = WINDOW_MANAGER:CreateControl(addon.name .. "_SparkCaption", windowControl, CT_LABEL)
+    sparkCaption:SetFont("ZoFontGameSmall")
+    sparkCaption:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
+    sparkCaption:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+
+    sparkContainer = WINDOW_MANAGER:CreateControl(addon.name .. "_SparkStrip", windowControl, CT_CONTROL)
+    sparkContainer:SetHeight(SPARK_HEIGHT)
+    sparkContainer:SetMouseEnabled(true)
+
+    -- Hover: summarize the series (oldest -> newest value and the change) so the
+    -- bars get exact figures on demand without crowding the strip with text.
+    sparkContainer:SetHandler("OnMouseEnter", function(self)
+        local valuation = addon.Valuation
+        local points = (valuation and valuation.GetValueHistory) and valuation.GetValueHistory() or {}
+        if #points < 2 then
+            return
+        end
+        local first, last = points[1], points[#points]
+        InitializeTooltip(InformationTooltip, self, TOPRIGHT, -6, 0, BOTTOMRIGHT)
+        InformationTooltip:AddLine(GetString(SI_BMW_FOOTER_HISTORY_LABEL), "ZoFontHeader2",
+            ZO_NORMAL_TEXT:UnpackRGB())
+        ZO_Tooltip_AddDivider(InformationTooltip)
+        InformationTooltip:AddLine(stringformat(GetString(SI_BMW_HISTORY_TOOLTIP_POINTS), #points),
+            "ZoFontGame", 0.86, 0.85, 0.78)
+        InformationTooltip:AddLine(stringformat(GetString(SI_BMW_HISTORY_TOOLTIP_OLDEST),
+            ZO_LocalizeDecimalNumber(zo_round(first.gold or 0))), "ZoFontGame", 0.86, 0.85, 0.78)
+        InformationTooltip:AddLine(stringformat(GetString(SI_BMW_HISTORY_TOOLTIP_NEWEST),
+            ZO_LocalizeDecimalNumber(zo_round(last.gold or 0))), "ZoFontGame", 1, 0.82, 0.25)
+        -- Net change across the recorded window, colored by direction.
+        local change = (last.gold or 0) - (first.gold or 0)
+        local r, g, b = 0.55, 0.79, 0.62
+        if change < 0 then
+            r, g, b = 0.82, 0.54, 0.54
+        end
+        InformationTooltip:AddLine(stringformat(GetString(SI_BMW_HISTORY_TOOLTIP_CHANGE),
+            ZO_LocalizeDecimalNumber(zo_round(change))), "ZoFontGame", r, g, b)
+    end)
+    sparkContainer:SetHandler("OnMouseExit", function()
+        ClearTooltip(InformationTooltip)
+    end)
 end
 
 -- Render just the footer text from the cached snapshot. Split out so the
@@ -410,6 +474,91 @@ local function RenderFooter()
     else
         footerDeltaRow.container:SetHidden(true)
     end
+end
+
+-- Acquire (or create) the Nth sparkline bar, a CT_BACKDROP fill bottom-anchored
+-- in the strip so its height grows upward. Pooled and reused across renders so a
+-- refresh re-points existing bars instead of creating new controls.
+local function AcquireSparkBar(index)
+    local bar = sparkBars[index]
+    if bar then
+        return bar
+    end
+
+    bar = WINDOW_MANAGER:CreateControl(
+        addon.name .. "_SparkBar" .. index, sparkContainer, CT_BACKDROP)
+    bar:SetEdgeColor(0, 0, 0, 0)        -- no border, just the fill
+    bar:SetInsets(0, 0, 0, 0)
+    sparkBars[index] = bar
+    return bar
+end
+
+-- Draw the value-history sparkline from the recorded samples. Each sample is one
+-- vertical bar whose height is its gold value normalized between the series
+-- min/max; the newest bar is tinted brighter so "now" stands out. Bars are laid
+-- out left (oldest) to right (newest) across the inner width. Returns the strip
+-- height consumed (0 when hidden or there's nothing meaningful to show) so the
+-- caller can advance its layout cursor. A flat series (min == max) draws all
+-- bars at full height rather than dividing by zero.
+local function RenderSparkline(innerWidth)
+    local valuation = addon.Valuation
+    local points = (valuation and valuation.GetValueHistory) and valuation.GetValueHistory() or {}
+
+    -- Need at least two points for a trend to mean anything; below that hide the
+    -- whole block (caption + strip) and report zero consumed height.
+    if #points < 2 then
+        sparkCaption:SetHidden(true)
+        sparkContainer:SetHidden(true)
+        for i = 1, #sparkBars do
+            sparkBars[i]:SetHidden(true)
+        end
+        return 0
+    end
+
+    sparkCaption:SetHidden(false)
+    sparkContainer:SetHidden(false)
+    sparkCaption:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_FOOTER_HISTORY_LABEL)))
+
+    local count = #points
+    local minGold, maxGold = points[1].gold or 0, points[1].gold or 0
+    for i = 2, count do
+        local g = points[i].gold or 0
+        if g < minGold then minGold = g end
+        if g > maxGold then maxGold = g end
+    end
+    local span = maxGold - minGold
+
+    -- Bar width: divide the strip evenly, leaving SPARK_BAR_GAP between bars.
+    -- Floor to whole pixels so bars align crisply; clamp to at least 1px.
+    local slot = innerWidth / count
+    local barWidth = zo_round(slot - SPARK_BAR_GAP)
+    if barWidth < 1 then
+        barWidth = 1
+    end
+
+    for i = 1, count do
+        local bar = AcquireSparkBar(i)
+        local gold = points[i].gold or 0
+        -- Normalize 0..1 within the series; a flat series pins to full height.
+        local frac = span > 0 and (gold - minGold) / span or 1
+        local height = SPARK_MIN_BAR_H + frac * (SPARK_HEIGHT - SPARK_MIN_BAR_H)
+
+        local color = (i == count) and SPARK_BAR_COLOR_NOW or SPARK_BAR_COLOR
+        bar:SetCenterColor(color[1], color[2], color[3], color[4])
+        bar:SetWidth(barWidth)
+        bar:SetHeight(zo_round(height))
+        bar:ClearAnchors()
+        -- Bottom-aligned so taller bars rise from a shared baseline.
+        bar:SetAnchor(BOTTOMLEFT, sparkContainer, BOTTOMLEFT, zo_round((i - 1) * slot), 0)
+        bar:SetHidden(false)
+    end
+
+    -- Hide any pooled bars left from a previous (longer) series.
+    for i = count + 1, #sparkBars do
+        sparkBars[i]:SetHidden(true)
+    end
+
+    return SPARK_HEIGHT
 end
 
 -- Re-render the window from the current valuation. Pure presentation: it reads
@@ -531,6 +680,28 @@ function Window.Update()
 
     RenderFooter()
 
+    -- Value-history sparkline (optional). Sits below the footer rows; the
+    -- caption + bar strip only consume space when there's enough history to
+    -- draw, and the whole block is skipped when the setting is off.
+    if sv.showValueHistory ~= false then
+        y = y + SECTION_GAP
+        sparkCaption:ClearAnchors()
+        sparkCaption:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, y)
+
+        local innerWidth = CurrentWidth() - PADDING * 2
+        sparkContainer:ClearAnchors()
+        sparkContainer:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, y + FOOTER_LINE)
+        sparkContainer:SetWidth(innerWidth)
+
+        local consumed = RenderSparkline(innerWidth)
+        if consumed > 0 then
+            y = y + FOOTER_LINE + consumed
+        end
+    else
+        sparkCaption:SetHidden(true)
+        sparkContainer:SetHidden(true)
+    end
+
     windowControl:SetHeight(y + PADDING)
 end
 
@@ -589,6 +760,11 @@ function Window.ApplyWidth()
     end
     if dividerBottom then
         dividerBottom:SetWidth(innerWidth)
+    end
+    -- The sparkline strip spans the inner width; its bars are re-laid-out by the
+    -- Window.Update() call at the end of this function.
+    if sparkContainer then
+        sparkContainer:SetWidth(innerWidth)
     end
 
     if rowPool then

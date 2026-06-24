@@ -22,6 +22,11 @@ local tonumber = tonumber
 --   lastVisitGold         grand total saved on last bag close, for the "since last visit" delta
 --   lastVisitItems        total item count saved alongside it, to gate the delta on real stock changes
 --   priceHistory          [itemId] = { p = unit price, t = unix timestamp }; baseline for the detail window's price-change column
+--   showValueHistory      draw the grand-total sparkline (Craft Bag value over time) in the footer
+--   notifyOnVisit         print the bag value (and since-last-visit change) to chat on the first open of each session
+--   valueHistory          ring buffer of grand-total samples; { head = <last index, 0 = empty>,
+--                         entries = { { t = unix, gold, items }, ... } }. See Valuation's
+--                         RecordValuePoint/GetValueHistory for the wrap-around bookkeeping.
 local DEFAULT_SAVED_VARS = {
     debugMode = 1,
     showCategoryBreakdown = true,
@@ -31,10 +36,13 @@ local DEFAULT_SAVED_VARS = {
     deltaMode = "visit",
     showBackground = true,
     showBorder = false,
+    showValueHistory = true,
+    notifyOnVisit = true,
     windowWidth = 400,
     windowOffsetX = -25,
     windowOffsetY = 0,
     priceHistory = {},
+    valueHistory = { head = 0, entries = {} },
 }
 
 local function GetSavedVarsOrDefaults()
@@ -228,6 +236,31 @@ function Settings.RegisterSettingsPanel()
                 end
             end,
             default = DEFAULT_SAVED_VARS.showBorder,
+            width = "full",
+        },
+        {
+            type = "checkbox",
+            name = GetString(SI_BMW_SETTING_VALUE_HISTORY_NAME),
+            tooltip = GetString(SI_BMW_SETTING_VALUE_HISTORY_TOOLTIP),
+            getFunc = function() return GetSavedVarsOrDefaults().showValueHistory ~= false end,
+            setFunc = function(value)
+                private.savedVars.showValueHistory = value
+                if addon.Window then
+                    addon.Window.Update()
+                end
+            end,
+            default = DEFAULT_SAVED_VARS.showValueHistory,
+            width = "full",
+        },
+        {
+            type = "checkbox",
+            name = GetString(SI_BMW_SETTING_NOTIFY_VISIT_NAME),
+            tooltip = GetString(SI_BMW_SETTING_NOTIFY_VISIT_TOOLTIP),
+            getFunc = function() return GetSavedVarsOrDefaults().notifyOnVisit ~= false end,
+            setFunc = function(value)
+                private.savedVars.notifyOnVisit = value
+            end,
+            default = DEFAULT_SAVED_VARS.notifyOnVisit,
             width = "full",
         },
         {
