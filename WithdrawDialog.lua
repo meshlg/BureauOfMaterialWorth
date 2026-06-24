@@ -82,8 +82,8 @@ local LogDebug = private.LogDebug
 
 -- Layout
 -- ---------------------------------------------------------------------------
-local POPUP_WIDTH   = 460
-local QUEUE_WIDTH   = 460
+local POPUP_WIDTH   = 520
+local QUEUE_WIDTH   = 520
 local PADDING       = 16
 local TITLE_HEIGHT  = 30
 local LINE          = 24       -- vertical rhythm for info lines

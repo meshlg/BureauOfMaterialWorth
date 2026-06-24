@@ -928,7 +928,184 @@ function Valuation.GetMaterialsMatching(query)
     return materials
 end
 
--- Apply the quality color to a material name, mirroring how the game tints item
+-- Snapshot + diff
+-- ---------------------------------------------------------------------------
+-- A manual, single snapshot of the craft bag's composition, frozen on demand
+-- (the detail window's "Remember" button) and later diffed against the live bag
+-- ("Changes"). Stored in savedVars so it survives restarts. Shape:
+--   snapshot = {
+--     t, gold, items, slots,                 -- header captured at Remember time
+--     materials = { [itemId] = { name, icon, quality, count, unitPrice, gold,
+--                                priced } },
+--   }
+-- name/icon/quality are stored (not re-resolved at diff time) because a material
+-- that has since left the bag has no live slot or item link to resolve from.
+
+-- Aggregate the current slotInfo by itemId. In practice the craft bag holds each
+-- material in exactly one slot, but aggregating is robust and keeps the diff keyed
+-- the same way as the stored snapshot. Returns { [itemId] = { count, gold,
+-- unitPrice, priced, slotIndex } }; slotIndex is any one source slot, kept only so
+-- a display name can be resolved lazily for added materials.
+local function AggregateCurrentByItemId()
+    local byId = {}
+    for slotIndex, info in pairs(slotInfo) do
+        local entry = byId[info.itemId]
+        if not entry then
+            entry = { count = 0, gold = 0, priced = info.priced, slotIndex = slotIndex }
+            byId[info.itemId] = entry
+        end
+        entry.count = entry.count + info.stack
+        entry.gold = entry.gold + info.value
+    end
+    -- Derive a representative unit price from the aggregate so a removed/added
+    -- material can be valued by its own per-unit figure.
+    for _, entry in pairs(byId) do
+        entry.unitPrice = entry.count > 0 and (entry.gold / entry.count) or 0
+    end
+    return byId
+end
+
+-- Freeze the current bag composition into savedVars, overwriting any prior
+-- snapshot (single-snapshot model). O(slots) with a name/icon resolve per
+-- material; runs once per button press, never on the scan path.
+function Valuation.CaptureSnapshot()
+    local sv = private.savedVars
+    if not sv then
+        return
+    end
+
+    local materials = {}
+    for slotIndex, info in pairs(slotInfo) do
+        local existing = materials[info.itemId]
+        if existing then
+            -- Same material in a second slot: fold its quantity/value in.
+            existing.count = existing.count + info.stack
+            existing.gold = existing.gold + info.value
+            existing.unitPrice = existing.count > 0 and (existing.gold / existing.count) or 0
+        else
+            local itemLink = GetItemLink(BAG, slotIndex)
+            local unitPrice = info.stack > 0 and (info.value / info.stack) or 0
+            materials[info.itemId] = {
+                name = zo_strformat(SI_TOOLTIP_ITEM_NAME, GetItemLinkName(itemLink)),
+                icon = GetItemLinkIcon(itemLink),
+                quality = GetItemLinkFunctionalQuality(itemLink),
+                count = info.stack,
+                gold = info.value,
+                unitPrice = unitPrice,
+                priced = info.priced,
+            }
+        end
+    end
+
+    sv.snapshot = {
+        t = GetTimeStamp(),
+        gold = grandGold,
+        items = grandItems,
+        slots = grandSlots,
+        materials = materials,
+    }
+end
+
+-- Whether a snapshot exists to diff against. Used by the window to pick between
+-- the diff list and the "no snapshot yet" empty state.
+function Valuation.HasSnapshot()
+    local sv = private.savedVars
+    return sv ~= nil and sv.snapshot ~= nil
+end
+
+-- Header info for the diff title (the relative-time label is built by the
+-- window). Returns nil when no snapshot exists.
+function Valuation.GetSnapshotInfo()
+    local sv = private.savedVars
+    local snap = sv and sv.snapshot
+    if not snap then
+        return nil
+    end
+    return { t = snap.t, gold = snap.gold, items = snap.items, slots = snap.slots }
+end
+
+-- Per-material diff rows comparing the live bag against the snapshot. Walks the
+-- union of snapshot materials and current materials (both keyed by itemId) and
+-- classifies each:
+--   added    (current only)         countDelta = +count,  status "new"
+--   removed  (snapshot only)        countDelta = -count,  status "gone"
+--   changed  (both, count differs)  countDelta = cur-snap, status "changed"
+--   count unchanged                 skipped
+-- The gold delta is the QUANTITY change valued at one unit price (the current
+-- unit price when available, else the snapshot's). Pure price drift (same count,
+-- reimported prices) is intentionally excluded by the count-unchanged skip, so
+-- the diff never shows a movement the player did not make - the same gating the
+-- footer delta uses. Returns an array of row records; empty when nothing changed
+-- or no snapshot exists. Sorting is left to the caller.
+--   { itemId, name, icon, quality, diff = true, countDelta, goldDelta, priced,
+--     status }  -- status is one of "new" / "gone" / "changed"
+function Valuation.GetDiffMaterials()
+    local sv = private.savedVars
+    local snap = sv and sv.snapshot
+    if not snap then
+        return {}
+    end
+
+    local snapMats = snap.materials or {}
+    local current = AggregateCurrentByItemId()
+    local rows = {}
+
+    -- Materials present now: added or changed (or unchanged, which we skip).
+    for itemId, cur in pairs(current) do
+        local old = snapMats[itemId]
+        if not old then
+            -- Added since the snapshot.
+            local itemLink = GetItemLink(BAG, cur.slotIndex)
+            rows[#rows + 1] = {
+                itemId = itemId,
+                name = zo_strformat(SI_TOOLTIP_ITEM_NAME, GetItemLinkName(itemLink)),
+                icon = GetItemLinkIcon(itemLink),
+                quality = GetItemLinkFunctionalQuality(itemLink),
+                diff = true,
+                countDelta = cur.count,
+                goldDelta = cur.unitPrice * cur.count,
+                priced = cur.priced,
+                status = "new",
+            }
+        elseif cur.count ~= old.count then
+            -- Quantity changed; value the delta at the current unit price.
+            local countDelta = cur.count - old.count
+            rows[#rows + 1] = {
+                itemId = itemId,
+                name = old.name,
+                icon = old.icon,
+                quality = old.quality,
+                diff = true,
+                countDelta = countDelta,
+                goldDelta = cur.unitPrice * countDelta,
+                priced = cur.priced,
+                status = "changed",
+            }
+        end
+        -- cur.count == old.count: unchanged, skipped (excludes price drift).
+    end
+
+    -- Materials in the snapshot but no longer present: removed.
+    for itemId, old in pairs(snapMats) do
+        if not current[itemId] then
+            rows[#rows + 1] = {
+                itemId = itemId,
+                name = old.name,
+                icon = old.icon,
+                quality = old.quality,
+                diff = true,
+                countDelta = -old.count,
+                goldDelta = -(old.unitPrice * old.count),
+                priced = old.priced,
+                status = "gone",
+            }
+        end
+    end
+
+    return rows
+end
+
+
 -- names. Kept here (next to the data) so the window can render a plain string.
 function Valuation.ColorizeMaterialName(name, quality)
     if not quality then

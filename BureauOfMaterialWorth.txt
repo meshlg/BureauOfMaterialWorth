@@ -1,6 +1,6 @@
-## Title: Bureau of Material Worth |c6FCB9Fv1.2.24061740|r
-## Version: 1.2.24061740
-## AddOnVersion: 1102
+## Title: Bureau of Material Worth |c6FCB9Fv1.2.24061955|r
+## Version: 1.2.24061955
+## AddOnVersion: 1200
 ## APIVersion: 101050
 ## Author: |c6FCB9Fmeshlg|r
 ## Description: Know what your Craft Bag is worth. Sums its market value (via LibPrice) with a per-profession breakdown and a clickable, scrollable material list.

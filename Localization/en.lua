@@ -61,6 +61,13 @@ local strings = {
     SI_BMW_DETAIL_COL_NAME = "Material",
     SI_BMW_DETAIL_COL_QTY = "Qty",
     SI_BMW_DETAIL_COL_VALUE = "Value",
+    -- Cumulative-share column: running % of the list's total value, read top-down
+    -- (the "what to sell" Pareto cue). Header kept short for the 70px column; the
+    -- hover tooltip on the header spells the meaning out in full.
+    SI_BMW_DETAIL_COL_CUM = "Cumul. %",
+    SI_BMW_DETAIL_CUM = "%d%%",
+    SI_BMW_DETAIL_CUM_TOOLTIP_TITLE = "Cumulative share",
+    SI_BMW_DETAIL_CUM_TOOLTIP_BODY = "Each material's share of this list's total value, added up from the most valuable downward - so it stays the same no matter how you sort the table. Read it on the default |cFFF897by value|r view: the rows down to roughly 80% are the few stacks that hold most of the worth, so sell those first and skip the long tail. The trailing 100% always lands on the cheapest material. Unpriced materials are left out and show a dash.",
     SI_BMW_DETAIL_COL_CHANGE = "Change",
     -- Price-change magnitude; the sign is carried by an up/down arrow + color.
     -- %s = the percentage (one decimal place).
@@ -71,6 +78,38 @@ local strings = {
     -- Search box (whole craft bag) in the detail window.
     SI_BMW_DETAIL_SEARCH_HINT = "Search...",
     SI_BMW_DETAIL_SEARCH_TITLE = "Search results",
+
+    -- Snapshot + diff view (detail window). "Remember" freezes the current bag
+    -- composition; "Changes" diffs the live bag against it. One snapshot, manual,
+    -- overwritten on each Remember - the tooltips spell that out since it is not
+    -- otherwise discoverable.
+    SI_BMW_DETAIL_BTN_REMEMBER = "Remember",
+    SI_BMW_DETAIL_BTN_REMEMBER_TOOLTIP_TITLE = "Remember composition",
+    SI_BMW_DETAIL_BTN_REMEMBER_TOOLTIP_BODY = "Manually save a snapshot of the Craft Bag's current contents. Press \"Changes\" later to see what was added, removed, or changed since. There is one snapshot - pressing this again overwrites it.",
+    SI_BMW_DETAIL_BTN_CHANGES = "Changes",
+    SI_BMW_DETAIL_BTN_CHANGES_TOOLTIP_TITLE = "Changes since snapshot",
+    SI_BMW_DETAIL_BTN_CHANGES_TOOLTIP_BODY = "Show how the Craft Bag has changed since your saved snapshot: which materials were added, removed, or changed in quantity, and the gold value of each move. Press \"Remember\" first to take a snapshot.",
+    -- In the diff view the "Changes" button becomes a "Back" toggle that returns
+    -- to the material list.
+    SI_BMW_DETAIL_BTN_BACK = "Back",
+    SI_BMW_DETAIL_BTN_BACK_TOOLTIP_TITLE = "Back to materials",
+    SI_BMW_DETAIL_BTN_BACK_TOOLTIP_BODY = "Return from the changes view to the material list.",
+    -- Diff title; %s = relative time of the snapshot (e.g. "5m ago").
+    SI_BMW_DETAIL_DIFF_TITLE = "Changes since %s",
+    SI_BMW_DETAIL_DIFF_EMPTY = "Nothing changed since the snapshot.",
+    SI_BMW_DETAIL_NO_SNAPSHOT = "No snapshot yet. Press Remember.",
+    -- Diff column headers. ASCII "+/-" rather than a Unicode delta glyph, which
+    -- the UI font will not render (same reason the addon uses arrow textures).
+    SI_BMW_DETAIL_COL_QTY_DELTA = "Qty +/-",
+    SI_BMW_DETAIL_COL_VALUE_DELTA = "Value +/-",
+    SI_BMW_DETAIL_COL_SHARE = "Share",
+    SI_BMW_DETAIL_COL_STATUS = "Status",
+    -- Per-row status word in the diff's repurposed Change column.
+    SI_BMW_DETAIL_STATUS_NEW = "new",
+    SI_BMW_DETAIL_STATUS_GONE = "gone",
+    SI_BMW_DETAIL_STATUS_CHANGED = "changed",
+    -- Signed integer for the Qty delta column; %s carries the sign (+/-).
+    SI_BMW_DETAIL_QTY_DELTA = "%s%s",
 
     -- Withdraw dialog: opened by clicking a material row, moves the material out
     -- of the Craft Bag into the backpack.

@@ -62,8 +62,13 @@ materials the total updates on its own.
   individual material* in that profession - handy for "Other", which can hold
   hundreds of distinct materials.
 - Each row shows the material's **icon**, its **name** (tinted by quality), the
-  **quantity** you hold, and its **total value**. Rows are sorted alphabetically
-  by name.
+  **quantity** you hold, and its **total value**. **Click any column header** to
+  sort by it (click again to flip direction); the table opens on **value,
+  highest first** - the "what to sell right now" order - so the stacks that make
+  up most of the bag's worth sit at the top.
+- A **cumulative-share column** ("Cum %") shows the running share of the list's
+  total value read top-down, so you can see at a glance that "the top few stacks
+  are 80% of the worth" - haul those to the guild and skip the long tail.
 - A **price-change column** (▲/▼ with a percentage) shows how each material's
   price has moved since it was last recorded. The addon keeps its own price
   history for this - a material shows "-" the first time you view it, then a real
@@ -79,6 +84,22 @@ materials the total updates on its own.
 - Matching is case-insensitive substring; clearing the box (or pressing Escape)
   returns to the category you opened. Withdraw and queue work from search results
   exactly as from a category.
+
+### Snapshot and changes
+
+- The material table has two buttons on its title bar. **Remember** saves a
+  snapshot of the Craft Bag's current composition; **Changes** shows a per-material
+  diff against that snapshot - what was added, removed, or changed in quantity since.
+- The diff list repurposes the columns: **Qty +/-** and **Value +/-** show the
+  signed change (green for gains, red for losses), **Share** shows each move's
+  portion of the total change, and **Status** reads "new", "gone", or "changed".
+  Rows are sorted by the biggest gold movement first.
+- There is **one snapshot**, taken manually - pressing Remember again overwrites it
+  - and it persists across sessions. The button tooltips spell this out. Before any
+  snapshot exists, Changes shows a short "press Remember" prompt.
+- As with the footer's value-change line, the diff counts **only real stock
+  changes**: a material whose quantity did not move is omitted, so a price-source
+  reimport that merely re-values the same materials never shows a phantom change.
 
 ### Withdraw materials into your backpack
 - **Left-click any material** (in a category or in search results) to open a
@@ -106,6 +127,13 @@ materials the total updates on its own.
   complete.
 - A **value-change row** (▲/▼) shows how your Craft Bag's value changed - labeled
   "This visit" or "This session" - see the note below for exactly what it counts.
+- An optional **value-history sparkline** beneath the footer plots your total
+  over time. One point is recorded per bag-open (at most once every few hours),
+  keeping the last 90; hover it for the oldest, newest, and net-change figures.
+  Because points are spaced hours apart, the graph appears once you have at least
+  two and fills in meaningfully over several days of play.
+- An optional **chat announcement** prints the bag's value the first time you open
+  it each session, with the since-last-visit change when your stock moved.
 - `/bmw refresh` re-queries prices - handy after Master Merchant or Tamriel Trade
   Centre finishes importing fresh data.
 
@@ -128,9 +156,9 @@ materials the total updates on its own.
 ### Settings & localization
 - A clean **LibAddonMenu** panel: toggle the category breakdown, profession
   icons, the gold color scale, and value sorting; choose the value-change
-  baseline (per visit or per session); show/hide the background and border; set
-  the panel width and offset; choose chat-debug verbosity; and force a price
-  refresh.
+  baseline (per visit or per session); show/hide the value-history sparkline and
+  the chat announcement; show/hide the background and border; set the panel width
+  and offset; choose chat-debug verbosity; and force a price refresh.
 - Full **English and Russian** localization.
 - Slash commands for everything (see below).
 

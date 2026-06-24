@@ -27,6 +27,11 @@ local tonumber = tonumber
 --   valueHistory          ring buffer of grand-total samples; { head = <last index, 0 = empty>,
 --                         entries = { { t = unix, gold, items }, ... } }. See Valuation's
 --                         RecordValuePoint/GetValueHistory for the wrap-around bookkeeping.
+--   snapshot              manual single snapshot of bag composition for the detail window's
+--                         diff view; nil until "Remember" is pressed (then overwritten). Shape:
+--                         { t, gold, items, slots, materials = { [itemId] = { name, icon,
+--                         quality, count, unitPrice, gold, priced } } }. See Valuation's
+--                         CaptureSnapshot/GetDiffMaterials.
 local DEFAULT_SAVED_VARS = {
     debugMode = 1,
     showCategoryBreakdown = true,
