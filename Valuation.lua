@@ -1029,7 +1029,8 @@ end
 -- classifies each:
 --   added    (current only)         countDelta = +count,  status "new"
 --   removed  (snapshot only)        countDelta = -count,  status "gone"
---   changed  (both, count differs)  countDelta = cur-snap, status "changed"
+--   increased (both, count went up)  countDelta > 0,       status "added"
+--   decreased (both, count went down) countDelta < 0,      status "reduced"
 --   count unchanged                 skipped
 -- The gold delta is the QUANTITY change valued at one unit price (the current
 -- unit price when available, else the snapshot's). Pure price drift (same count,
@@ -1068,7 +1069,10 @@ function Valuation.GetDiffMaterials()
                 status = "new",
             }
         elseif cur.count ~= old.count then
-            -- Quantity changed; value the delta at the current unit price.
+            -- Quantity changed; value the delta at the current unit price. Split
+            -- the status by direction so the column reads "added"/"reduced", not a
+            -- single ambiguous "changed" (the sign is otherwise only in the Qty
+            -- column).
             local countDelta = cur.count - old.count
             rows[#rows + 1] = {
                 itemId = itemId,
@@ -1079,7 +1083,7 @@ function Valuation.GetDiffMaterials()
                 countDelta = countDelta,
                 goldDelta = cur.unitPrice * countDelta,
                 priced = cur.priced,
-                status = "changed",
+                status = countDelta > 0 and "added" or "reduced",
             }
         end
         -- cur.count == old.count: unchanged, skipped (excludes price drift).

@@ -31,6 +31,8 @@ local strings = {
     [SI_BMW_SETTING_VALUE_HISTORY_TOOLTIP] = "Рисовать внизу панели небольшой график стоимости ремесленной сумки во времени. Одна точка записывается при каждом открытии сумки (не чаще раза в несколько часов), хранятся последние 90 точек. Наведите курсор на график, чтобы увидеть самое старое, самое новое значения и итоговое изменение.",
     [SI_BMW_SETTING_NOTIFY_VISIT_NAME] = "Сообщать стоимость в чат",
     [SI_BMW_SETTING_NOTIFY_VISIT_TOOLTIP] = "Выводить стоимость ремесленной сумки в чат при первом открытии за сессию, вместе с изменением с прошлого визита (когда запас менялся). Выключите, чтобы не выводить ничего в чат.",
+    [SI_BMW_SETTING_GUILD_STORE_NAME] = "Показывать в гильдейском магазине",
+    [SI_BMW_SETTING_GUILD_STORE_TOOLTIP] = "Показывать панель стоимости, пока открыт гильдейский магазин. Она сдвигается левее, чтобы не перекрывать панель магазина. Выключите, чтобы полностью скрыть панель во время торговли.",
     [SI_BMW_SETTING_WIDTH_NAME] = "Ширина окна",
     [SI_BMW_SETTING_WIDTH_TOOLTIP] = "Ширина панели стоимости в пикселях. Увеличьте, если длинные названия категорий или большие суммы золота выглядят тесно.",
     [SI_BMW_SETTING_OFFSET_X_NAME] = "Смещение по горизонтали",
@@ -91,8 +93,9 @@ local strings = {
     [SI_BMW_DETAIL_COL_SHARE] = "Доля",
     [SI_BMW_DETAIL_COL_STATUS] = "Статус",
     [SI_BMW_DETAIL_STATUS_NEW] = "новый",
-    [SI_BMW_DETAIL_STATUS_GONE] = "убыл",
-    [SI_BMW_DETAIL_STATUS_CHANGED] = "изменён",
+    [SI_BMW_DETAIL_STATUS_GONE] = "пропал",
+    [SI_BMW_DETAIL_STATUS_ADDED] = "прибавка",
+    [SI_BMW_DETAIL_STATUS_REDUCED] = "убыль",
     [SI_BMW_DETAIL_QTY_DELTA] = "%s%s",
 
     -- Withdraw dialog

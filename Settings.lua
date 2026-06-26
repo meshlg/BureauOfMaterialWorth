@@ -19,6 +19,7 @@ local tonumber = tonumber
 --   showBorder            draw the panel's border edge
 --   windowWidth           panel width in px (see Window MIN/MAX/STEP bounds)
 --   windowOffsetX/Y       fine-tune the window position relative to ZO_CraftBag
+--   showInGuildStore      show the panel while the guild store is open (shifted clear of the store UI)
 --   lastVisitGold         grand total saved on last bag close, for the "since last visit" delta
 --   lastVisitItems        total item count saved alongside it, to gate the delta on real stock changes
 --   priceHistory          [itemId] = { p = unit price, t = unix timestamp }; baseline for the detail window's price-change column
@@ -43,6 +44,7 @@ local DEFAULT_SAVED_VARS = {
     showBorder = false,
     showValueHistory = true,
     notifyOnVisit = true,
+    showInGuildStore = true,
     windowWidth = 400,
     windowOffsetX = -25,
     windowOffsetY = 0,
@@ -266,6 +268,20 @@ function Settings.RegisterSettingsPanel()
                 private.savedVars.notifyOnVisit = value
             end,
             default = DEFAULT_SAVED_VARS.notifyOnVisit,
+            width = "full",
+        },
+        {
+            type = "checkbox",
+            name = GetString(SI_BMW_SETTING_GUILD_STORE_NAME),
+            tooltip = GetString(SI_BMW_SETTING_GUILD_STORE_TOOLTIP),
+            getFunc = function() return GetSavedVarsOrDefaults().showInGuildStore ~= false end,
+            setFunc = function(value)
+                private.savedVars.showInGuildStore = value
+                if addon.Window then
+                    addon.Window.Show()
+                end
+            end,
+            default = DEFAULT_SAVED_VARS.showInGuildStore,
             width = "full",
         },
         {

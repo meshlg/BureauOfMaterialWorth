@@ -28,6 +28,8 @@ local strings = {
     SI_BMW_SETTING_VALUE_HISTORY_TOOLTIP = "Draw a small sparkline of your Craft Bag's total value over time at the bottom of the panel. One point is recorded each time you open the Craft Bag (at most once every few hours), keeping the last 90 points. Hover the sparkline for the oldest, newest, and net-change figures.",
     SI_BMW_SETTING_NOTIFY_VISIT_NAME = "Announce value in chat",
     SI_BMW_SETTING_NOTIFY_VISIT_TOOLTIP = "Print your Craft Bag's value to chat the first time you open it each session, along with how much it changed since your last visit (when the stock changed). Turn off for no chat output.",
+    SI_BMW_SETTING_GUILD_STORE_NAME = "Show in guild store",
+    SI_BMW_SETTING_GUILD_STORE_TOOLTIP = "Show the value panel while the guild store is open. It is shifted further left so it does not cover the store's browse panel. Turn off to hide the panel entirely while trading.",
     SI_BMW_SETTING_WIDTH_NAME = "Window width",
     SI_BMW_SETTING_WIDTH_TOOLTIP = "Width of the value panel in pixels. Increase it if long category names or large gold figures look cramped.",
     SI_BMW_SETTING_OFFSET_X_NAME = "Horizontal offset",
@@ -107,7 +109,8 @@ local strings = {
     -- Per-row status word in the diff's repurposed Change column.
     SI_BMW_DETAIL_STATUS_NEW = "new",
     SI_BMW_DETAIL_STATUS_GONE = "gone",
-    SI_BMW_DETAIL_STATUS_CHANGED = "changed",
+    SI_BMW_DETAIL_STATUS_ADDED = "added",
+    SI_BMW_DETAIL_STATUS_REDUCED = "reduced",
     -- Signed integer for the Qty delta column; %s carries the sign (+/-).
     SI_BMW_DETAIL_QTY_DELTA = "%s%s",
 

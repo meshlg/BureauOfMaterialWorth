@@ -187,6 +187,17 @@ local function GetSavedVars()
     return private.savedVars or {}
 end
 
+-- The window anchors to the left edge of the Craft Bag. In the guild store the
+-- trading house's own browse pane (ZO_TradingHouseBrowseItemsLeftPane, ~265px)
+-- sits in exactly that space, so the panel lands on top of it. When the trading
+-- house scene is up we shift the window an extra amount left so it clears that
+-- pane: the pane width plus a small gap, on top of the user's configured offset.
+local GUILD_STORE_OFFSET_X = -375
+
+local function IsGuildStoreShowing()
+    return TRADING_HOUSE_SCENE ~= nil and TRADING_HOUSE_SCENE:IsShowing()
+end
+
 -- The configured window width, clamped to the supported range and snapped to the
 -- slider step, with a safe fallback when nothing is saved yet. Every
 -- width-dependent control reads this so a settings change re-flows consistently.
@@ -332,9 +343,7 @@ function Window.Initialize()
     windowControl:SetHidden(true)
     windowControl:SetMouseEnabled(true)  -- so category rows can receive hover
 
-    local sv = GetSavedVars()
-    windowControl:SetAnchor(TOPRIGHT, ZO_CraftBag, TOPLEFT,
-        sv.windowOffsetX or -25, sv.windowOffsetY or 0)
+    Window.ApplyAnchor()
 
     backdrop = WINDOW_MANAGER:CreateControl(addon.name .. "_Backdrop", windowControl, CT_BACKDROP)
     backdrop:SetAnchorFill(windowControl)
@@ -719,6 +728,22 @@ function Window.Show()
     if not windowControl then
         return
     end
+    -- Only meaningful while the Craft Bag is on screen. The fragment callback
+    -- only fires Show() when it is, but the settings toggle also calls Show() to
+    -- refresh visibility, and that can happen with the bag closed.
+    if not (CRAFT_BAG_FRAGMENT and CRAFT_BAG_FRAGMENT:IsShowing()) then
+        Window.Hide()
+        return
+    end
+    -- Suppressed in the guild store when the user has opted out: the panel would
+    -- otherwise sit over the trading house UI, and not everyone wants it there.
+    if IsGuildStoreShowing() and GetSavedVars().showInGuildStore == false then
+        Window.Hide()
+        return
+    end
+    -- Re-anchor on each show: the correct offset depends on whether the guild
+    -- store is up, which is only known now (not at Initialize time).
+    Window.ApplyAnchor()
     Window.Update()
     windowControl:SetHidden(false)
     StartFooterTick()
@@ -732,14 +757,20 @@ function Window.Hide()
 end
 
 -- Re-apply the configured anchor offset after the settings panel changes it.
+-- The window hangs off the left edge of the Craft Bag; in the guild store an
+-- extra leftward shift keeps it clear of the trading house's browse pane.
 function Window.ApplyAnchor()
     if not windowControl then
         return
     end
     local sv = GetSavedVars()
+    local offsetX = sv.windowOffsetX or -25
+    if IsGuildStoreShowing() then
+        offsetX = offsetX + GUILD_STORE_OFFSET_X
+    end
     windowControl:ClearAnchors()
     windowControl:SetAnchor(TOPRIGHT, ZO_CraftBag, TOPLEFT,
-        sv.windowOffsetX or -25, sv.windowOffsetY or 0)
+        offsetX, sv.windowOffsetY or 0)
 end
 
 -- Re-apply the configured width to the window and every width-dependent control

@@ -189,11 +189,14 @@ local function SetupMaterialColumns(rowControl, data)
     end
 end
 
--- Map a diff status ("new"/"gone"/"changed") to its localized word.
+-- Map a diff status to its localized word. Four states: new (added since the
+-- snapshot), gone (removed entirely), added (quantity went up), reduced (quantity
+-- went down).
 local DIFF_STATUS_STRING = {
     new = SI_BMW_DETAIL_STATUS_NEW,
     gone = SI_BMW_DETAIL_STATUS_GONE,
-    changed = SI_BMW_DETAIL_STATUS_CHANGED,
+    added = SI_BMW_DETAIL_STATUS_ADDED,
+    reduced = SI_BMW_DETAIL_STATUS_REDUCED,
 }
 
 -- Render the same four columns for a diff row, repurposed:
@@ -201,7 +204,7 @@ local DIFF_STATUS_STRING = {
 --   Value  -> arrow + colored signed gold delta + gold icon (Change-column idiom);
 --             a dash when the material is unpriced
 --   Cum    -> share of total absolute change, assigned in Populate (else dash)
---   Change -> colored status word (new / gone / changed)
+--   Change -> colored status word (new / gone / added / reduced)
 -- A positive delta is a gain (deposited/added), negative a loss (withdrawn/gone),
 -- colored with the same green/red the price-change column uses.
 local function SetupDiffColumns(rowControl, data)
@@ -235,14 +238,14 @@ local function SetupDiffColumns(rowControl, data)
         cumLabel:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_DETAIL_GROWTH_NEW)))
     end
 
-    -- Change -> status word, colored: new = gain green, gone = loss red, changed
-    -- = neutral muted (the Qty/Value columns already carry its direction).
+    -- Change -> status word, colored by direction: gains (new / added) green,
+    -- losses (gone / reduced) red. The Qty/Value columns carry the magnitude.
     local changeLabel = rowControl:GetNamedChild("Change")
     local statusStringId = DIFF_STATUS_STRING[data.status]
     local statusColor = COLOR_MUTED
-    if data.status == "new" then
+    if data.status == "new" or data.status == "added" then
         statusColor = COLOR_GAIN
-    elseif data.status == "gone" then
+    elseif data.status == "gone" or data.status == "reduced" then
         statusColor = COLOR_LOSS
     end
     if statusStringId then

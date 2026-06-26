@@ -92,7 +92,8 @@ materials the total updates on its own.
   diff against that snapshot - what was added, removed, or changed in quantity since.
 - The diff list repurposes the columns: **Qty +/-** and **Value +/-** show the
   signed change (green for gains, red for losses), **Share** shows each move's
-  portion of the total change, and **Status** reads "new", "gone", or "changed".
+  portion of the total change, and **Status** reads "new", "gone", "added", or
+  "reduced".
   Rows are sorted by the biggest gold movement first.
 - There is **one snapshot**, taken manually - pressing Remember again overwrites it
   - and it persists across sessions. The button tooltips spell this out. Before any
