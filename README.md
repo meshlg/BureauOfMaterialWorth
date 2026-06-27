@@ -9,7 +9,7 @@ knows the worthless vendor price; this addon reads real trading prices through
 **LibPrice**, which transparently pulls from whichever price source you have
 installed (Master Merchant, Tamriel Trade Centre, or Arkadius' Trade Tools).
 
-> **Compatibility:** API: LIVE 101050 · Requires [LibPrice](https://www.esoui.com/downloads/info2753.html)
+> **Compatibility:** API: LIVE 101050 · Requires [LibPrice](https://www.esoui.com/downloads/info2753.html) (>= 3825)
 > (and a price source such as Master Merchant or Tamriel Trade Centre to read
 > prices from) and [LibAddonMenu-2.0](https://www.esoui.com/downloads/info7-LibAddonMenu.html)
 > (>= 43) for the settings panel.
