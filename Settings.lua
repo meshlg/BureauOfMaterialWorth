@@ -118,6 +118,99 @@ function Settings.RegisterSettingsPanel()
         private.GetDebugLevelName(4),
     }
 
+    -- ---------------------------------------------------------------------------
+    -- Single source of truth for the panel's read side
+    -- ---------------------------------------------------------------------------
+    -- Every control's getFunc, the status dashboard, and the breakdown submenu's
+    -- gating all read these, so the three can never disagree. Defaults mirror
+    -- DEFAULT_SAVED_VARS (the same ~= false / == true sense the window uses).
+    local function IsBreakdownOn()    return Settings.IsCategoryBreakdownEnabled() end
+    local function IsIconsOn()        return GetSavedVarsOrDefaults().showCategoryIcons ~= false end
+    local function IsColorScaleOn()   return GetSavedVarsOrDefaults().colorScaleGold ~= false end
+    local function IsSortByValueOn()  return GetSavedVarsOrDefaults().sortByValue == true end
+    local function IsValueHistoryOn() return GetSavedVarsOrDefaults().showValueHistory ~= false end
+    local function IsNotifyOn()       return GetSavedVarsOrDefaults().notifyOnVisit ~= false end
+    local function IsGuildStoreOn()   return GetSavedVarsOrDefaults().showInGuildStore ~= false end
+    local function GetDeltaMode()     return GetSavedVarsOrDefaults().deltaMode or DEFAULT_SAVED_VARS.deltaMode end
+
+    -- The icon/color/sort controls only do anything while the breakdown is shown
+    -- (see Window.Update, which renders category rows solely inside that branch),
+    -- so they gate on this shared condition rather than going dim only globally.
+    local function BreakdownDisabled()
+        return not IsBreakdownOn()
+    end
+
+    -- ---------------------------------------------------------------------------
+    -- Live status helpers (panel dashboard + breakdown submenu title tag)
+    -- ---------------------------------------------------------------------------
+    -- LAM re-reads function-valued `text`/`name` on every setting change and on
+    -- panel open (registerForRefresh is set), so these read live each time. The
+    -- block reflects the saved configuration, not the live bag value: the
+    -- valuation only runs while the Craft Bag is open, so a value readout here
+    -- would be stale or zero. On = the shipped green, off = the muted label grey;
+    -- mode rows (order/baseline are not on/off) use the neutral label tone.
+    local STATUS_COLOR_ON   = "6FCB9F"
+    local STATUS_COLOR_OFF  = "8C8A82"
+    local STATUS_COLOR_MODE = "C5C29E"
+
+    local function Colorize(colorHex, text)
+        return string.format("|c%s%s|r", colorHex, text)
+    end
+
+    -- A plain colored on/off word for the dashboard rows.
+    local function StatusOnOff(enabled)
+        return Colorize(enabled and STATUS_COLOR_ON or STATUS_COLOR_OFF,
+            GetString(enabled and SI_BMW_STATUS_ON or SI_BMW_STATUS_OFF))
+    end
+
+    -- A bracketed colored tag for a submenu title. `word` is already localized.
+    local function StatusTag(enabled, word)
+        return Colorize(enabled and STATUS_COLOR_ON or STATUS_COLOR_OFF, "[" .. word .. "]")
+    end
+
+    local function BoolTag(enabled)
+        return StatusTag(enabled, GetString(enabled and SI_BMW_STATUS_ON or SI_BMW_STATUS_OFF))
+    end
+
+    -- A neutral-toned value for the mode rows (sort order / change baseline),
+    -- which are a choice between modes rather than an on/off state.
+    local function ModeValue(word)
+        return Colorize(STATUS_COLOR_MODE, word)
+    end
+
+    -- "Label  value" dashboard row; the label is localized, the value pre-colored.
+    local function StatusRow(labelKey, valueText)
+        return string.format("%s  %s", GetString(labelKey), valueText)
+    end
+
+    -- Sort order is a mode, not on/off: show which ordering is in effect.
+    local function SortWord()
+        return GetString(IsSortByValueOn() and SI_BMW_STATUS_SORT_BY_VALUE
+            or SI_BMW_STATUS_SORT_BY_PROFESSION)
+    end
+
+    -- The change baseline is a mode (visit/session); reuse the dropdown's own
+    -- localized choice strings so the dashboard label matches the control.
+    local function DeltaWord()
+        return GetString(GetDeltaMode() == "session"
+            and SI_BMW_SETTING_DELTA_MODE_SESSION or SI_BMW_SETTING_DELTA_MODE_VISIT)
+    end
+
+    -- One "Label  value" row per key feature/state, read through the same getters
+    -- the controls below use so the block can never drift from them.
+    local function BuildStatusText()
+        local rows = {
+            StatusRow(SI_BMW_STATUS_LABEL_BREAKDOWN,     StatusOnOff(IsBreakdownOn())),
+            StatusRow(SI_BMW_STATUS_LABEL_SORT,          ModeValue(SortWord())),
+            StatusRow(SI_BMW_STATUS_LABEL_COLOR_SCALE,   StatusOnOff(IsColorScaleOn())),
+            StatusRow(SI_BMW_STATUS_LABEL_VALUE_HISTORY, StatusOnOff(IsValueHistoryOn())),
+            StatusRow(SI_BMW_STATUS_LABEL_NOTIFY,        StatusOnOff(IsNotifyOn())),
+            StatusRow(SI_BMW_STATUS_LABEL_GUILD_STORE,   StatusOnOff(IsGuildStoreOn())),
+            StatusRow(SI_BMW_STATUS_LABEL_DELTA,         ModeValue(DeltaWord())),
+        }
+        return table.concat(rows, "\n")
+    end
+
     local panelData = {
         type = "panel",
         name = GetString(SI_BMW_PANEL_NAME),
@@ -141,65 +234,100 @@ function Settings.RegisterSettingsPanel()
             width = "full",
         },
         {
+            -- Live at-a-glance dashboard. function-valued text so LAM refreshes it
+            -- on panel open and after any setting change (registerForRefresh).
+            type = "description",
+            title = GetString(SI_BMW_STATUS_TITLE),
+            text = BuildStatusText,
+            width = "full",
+            reference = "BMWSettingsStatusBlock",
+        },
+        {
             type = "header",
             name = GetString(SI_BMW_HEADER_DISPLAY),
             width = "full",
         },
         {
-            type = "checkbox",
-            name = GetString(SI_BMW_SETTING_CATEGORY_BREAKDOWN_NAME),
-            tooltip = GetString(SI_BMW_SETTING_CATEGORY_BREAKDOWN_TOOLTIP),
-            getFunc = function() return Settings.IsCategoryBreakdownEnabled() end,
-            setFunc = function(value)
-                private.savedVars.showCategoryBreakdown = value
-                if addon.Window then
-                    addon.Window.Update()
-                end
+            -- Category-breakdown cluster. The master "show breakdown" toggle plus
+            -- the three controls (icons, color, sort) that only do anything while
+            -- it is on, grouped in a submenu whose title carries a live [on]/[off]
+            -- tag. The dependent controls gate on BreakdownDisabled so they grey
+            -- out together when the breakdown is off.
+            type = "submenu",
+            name = function()
+                return GetString(SI_BMW_SUBMENU_BREAKDOWN_NAME) .. "  " .. BoolTag(IsBreakdownOn())
             end,
-            default = DEFAULT_SAVED_VARS.showCategoryBreakdown,
-            width = "full",
-        },
-        {
-            type = "checkbox",
-            name = GetString(SI_BMW_SETTING_CATEGORY_ICONS_NAME),
-            tooltip = GetString(SI_BMW_SETTING_CATEGORY_ICONS_TOOLTIP),
-            getFunc = function() return GetSavedVarsOrDefaults().showCategoryIcons ~= false end,
-            setFunc = function(value)
-                private.savedVars.showCategoryIcons = value
-                if addon.Window then
-                    addon.Window.Update()
-                end
-            end,
-            default = DEFAULT_SAVED_VARS.showCategoryIcons,
-            width = "full",
-        },
-        {
-            type = "checkbox",
-            name = GetString(SI_BMW_SETTING_COLOR_SCALE_NAME),
-            tooltip = GetString(SI_BMW_SETTING_COLOR_SCALE_TOOLTIP),
-            getFunc = function() return GetSavedVarsOrDefaults().colorScaleGold ~= false end,
-            setFunc = function(value)
-                private.savedVars.colorScaleGold = value
-                if addon.Window then
-                    addon.Window.Update()
-                end
-            end,
-            default = DEFAULT_SAVED_VARS.colorScaleGold,
-            width = "full",
-        },
-        {
-            type = "checkbox",
-            name = GetString(SI_BMW_SETTING_SORT_BY_VALUE_NAME),
-            tooltip = GetString(SI_BMW_SETTING_SORT_BY_VALUE_TOOLTIP),
-            getFunc = function() return GetSavedVarsOrDefaults().sortByValue == true end,
-            setFunc = function(value)
-                private.savedVars.sortByValue = value
-                if addon.Window then
-                    addon.Window.Update()
-                end
-            end,
-            default = DEFAULT_SAVED_VARS.sortByValue,
-            width = "full",
+            tooltip = GetString(SI_BMW_SUBMENU_BREAKDOWN_DESCRIPTION),
+            controls = {
+                {
+                    type = "description",
+                    text = GetString(SI_BMW_SUBMENU_BREAKDOWN_DESCRIPTION),
+                    width = "full",
+                },
+                {
+                    type = "checkbox",
+                    name = GetString(SI_BMW_SETTING_CATEGORY_BREAKDOWN_NAME),
+                    tooltip = GetString(SI_BMW_SETTING_CATEGORY_BREAKDOWN_TOOLTIP),
+                    getFunc = function() return IsBreakdownOn() end,
+                    setFunc = function(value)
+                        private.savedVars.showCategoryBreakdown = value
+                        if addon.Window then
+                            addon.Window.Update()
+                        end
+                    end,
+                    default = DEFAULT_SAVED_VARS.showCategoryBreakdown,
+                    width = "full",
+                    reference = "BMWSettingsCategoryBreakdown",
+                },
+                {
+                    type = "checkbox",
+                    name = GetString(SI_BMW_SETTING_CATEGORY_ICONS_NAME),
+                    tooltip = GetString(SI_BMW_SETTING_CATEGORY_ICONS_TOOLTIP),
+                    getFunc = function() return IsIconsOn() end,
+                    setFunc = function(value)
+                        private.savedVars.showCategoryIcons = value
+                        if addon.Window then
+                            addon.Window.Update()
+                        end
+                    end,
+                    default = DEFAULT_SAVED_VARS.showCategoryIcons,
+                    disabled = BreakdownDisabled,
+                    width = "full",
+                    reference = "BMWSettingsCategoryIcons",
+                },
+                {
+                    type = "checkbox",
+                    name = GetString(SI_BMW_SETTING_COLOR_SCALE_NAME),
+                    tooltip = GetString(SI_BMW_SETTING_COLOR_SCALE_TOOLTIP),
+                    getFunc = function() return IsColorScaleOn() end,
+                    setFunc = function(value)
+                        private.savedVars.colorScaleGold = value
+                        if addon.Window then
+                            addon.Window.Update()
+                        end
+                    end,
+                    default = DEFAULT_SAVED_VARS.colorScaleGold,
+                    disabled = BreakdownDisabled,
+                    width = "full",
+                    reference = "BMWSettingsColorScale",
+                },
+                {
+                    type = "checkbox",
+                    name = GetString(SI_BMW_SETTING_SORT_BY_VALUE_NAME),
+                    tooltip = GetString(SI_BMW_SETTING_SORT_BY_VALUE_TOOLTIP),
+                    getFunc = function() return IsSortByValueOn() end,
+                    setFunc = function(value)
+                        private.savedVars.sortByValue = value
+                        if addon.Window then
+                            addon.Window.Update()
+                        end
+                    end,
+                    default = DEFAULT_SAVED_VARS.sortByValue,
+                    disabled = BreakdownDisabled,
+                    width = "full",
+                    reference = "BMWSettingsSortByValue",
+                },
+            },
         },
         {
             type = "dropdown",
@@ -207,7 +335,7 @@ function Settings.RegisterSettingsPanel()
             tooltip = GetString(SI_BMW_SETTING_DELTA_MODE_TOOLTIP),
             choices = { GetString(SI_BMW_SETTING_DELTA_MODE_VISIT), GetString(SI_BMW_SETTING_DELTA_MODE_SESSION) },
             choicesValues = { "visit", "session" },
-            getFunc = function() return GetSavedVarsOrDefaults().deltaMode or DEFAULT_SAVED_VARS.deltaMode end,
+            getFunc = function() return GetDeltaMode() end,
             setFunc = function(value)
                 private.savedVars.deltaMode = value
                 if addon.Window then
@@ -249,7 +377,7 @@ function Settings.RegisterSettingsPanel()
             type = "checkbox",
             name = GetString(SI_BMW_SETTING_VALUE_HISTORY_NAME),
             tooltip = GetString(SI_BMW_SETTING_VALUE_HISTORY_TOOLTIP),
-            getFunc = function() return GetSavedVarsOrDefaults().showValueHistory ~= false end,
+            getFunc = function() return IsValueHistoryOn() end,
             setFunc = function(value)
                 private.savedVars.showValueHistory = value
                 if addon.Window then
@@ -263,7 +391,7 @@ function Settings.RegisterSettingsPanel()
             type = "checkbox",
             name = GetString(SI_BMW_SETTING_NOTIFY_VISIT_NAME),
             tooltip = GetString(SI_BMW_SETTING_NOTIFY_VISIT_TOOLTIP),
-            getFunc = function() return GetSavedVarsOrDefaults().notifyOnVisit ~= false end,
+            getFunc = function() return IsNotifyOn() end,
             setFunc = function(value)
                 private.savedVars.notifyOnVisit = value
             end,
@@ -274,7 +402,7 @@ function Settings.RegisterSettingsPanel()
             type = "checkbox",
             name = GetString(SI_BMW_SETTING_GUILD_STORE_NAME),
             tooltip = GetString(SI_BMW_SETTING_GUILD_STORE_TOOLTIP),
-            getFunc = function() return GetSavedVarsOrDefaults().showInGuildStore ~= false end,
+            getFunc = function() return IsGuildStoreOn() end,
             setFunc = function(value)
                 private.savedVars.showInGuildStore = value
                 if addon.Window then

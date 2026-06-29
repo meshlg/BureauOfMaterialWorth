@@ -5,17 +5,40 @@ local strings = {
     SI_BMW_PANEL_INTRO = "|c6FCB9FCraft Bag value at a glance.|r Bureau of Material Worth sums the market value of everything in your Craft Bag and shows it in a small panel beside the bag, with an optional breakdown by crafting profession.",
     SI_BMW_PANEL_OVERVIEW = "|c8C8A82• Uses LibPrice (Master Merchant / Tamriel Trade Centre / Arkadius' Trade Tools)\n• Computes lazily, only while the Craft Bag is open\n• Updates incrementally as you deposit or withdraw materials|r",
 
+    -- Live at-a-glance status block at the top of the panel. It reflects the
+    -- current configuration (not the live bag value): the valuation only runs
+    -- while the Craft Bag is open, so a value readout here would be stale or
+    -- zero. On = green, off = muted grey; mode rows (order/baseline) use the
+    -- neutral label tone. Each row reads through the same getter as its control.
+    SI_BMW_STATUS_TITLE = "|cC5C29ECurrent status|r",
+    SI_BMW_STATUS_ON = "on",
+    SI_BMW_STATUS_OFF = "off",
+    SI_BMW_STATUS_LABEL_BREAKDOWN = "Category breakdown:",
+    SI_BMW_STATUS_LABEL_SORT = "Category order:",
+    SI_BMW_STATUS_SORT_BY_VALUE = "by value",
+    SI_BMW_STATUS_SORT_BY_PROFESSION = "by profession",
+    SI_BMW_STATUS_LABEL_COLOR_SCALE = "Color gold by value:",
+    SI_BMW_STATUS_LABEL_VALUE_HISTORY = "Value history:",
+    SI_BMW_STATUS_LABEL_NOTIFY = "Announce in chat:",
+    SI_BMW_STATUS_LABEL_GUILD_STORE = "In guild store:",
+    SI_BMW_STATUS_LABEL_DELTA = "Change baseline:",
+
     SI_BMW_HEADER_DISPLAY = "|cC5C29EDisplay|r",
     SI_BMW_HEADER_DIAGNOSTICS = "|cC5C29EDiagnostics|r",
+
+    -- Category-breakdown submenu: the master "show breakdown" toggle plus the
+    -- three controls that only do anything while it is on (icons, color, sort).
+    SI_BMW_SUBMENU_BREAKDOWN_NAME = "Category breakdown",
+    SI_BMW_SUBMENU_BREAKDOWN_DESCRIPTION = "|c8C8A82Break the grand total down into per-profession rows, and tune how those rows look. The icon, color, and sort options below only take effect while the breakdown is shown.|r",
 
     SI_BMW_SETTING_CATEGORY_BREAKDOWN_NAME = "Show category breakdown",
     SI_BMW_SETTING_CATEGORY_BREAKDOWN_TOOLTIP = "Show per-profession subtotals (Blacksmithing, Alchemy, Provisioning, and so on) beneath the grand total. When off, only the grand total is shown.",
     SI_BMW_SETTING_CATEGORY_ICONS_NAME = "Show category icons",
-    SI_BMW_SETTING_CATEGORY_ICONS_TOOLTIP = "Show a small profession icon to the left of each category name, so the rows are quicker to scan. \"Other\" has no profession and shows no icon.",
+    SI_BMW_SETTING_CATEGORY_ICONS_TOOLTIP = "Show a small profession icon to the left of each category name, so the rows are quicker to scan. \"Other\" has no profession and shows no icon. Has no effect while the category breakdown is off.",
     SI_BMW_SETTING_COLOR_SCALE_NAME = "Color gold by value",
-    SI_BMW_SETTING_COLOR_SCALE_TOOLTIP = "Tint each category's gold figure by how large it is - dim for small amounts up to a hot color for the biggest - so your most valuable categories stand out at a glance. When off, all figures use the same gold tone.",
+    SI_BMW_SETTING_COLOR_SCALE_TOOLTIP = "Tint each category's gold figure by how large it is - dim for small amounts up to a hot color for the biggest - so your most valuable categories stand out at a glance. When off, all figures use the same gold tone. Has no effect while the category breakdown is off.",
     SI_BMW_SETTING_SORT_BY_VALUE_NAME = "Sort categories by value",
-    SI_BMW_SETTING_SORT_BY_VALUE_TOOLTIP = "Order the category rows by descending gold value, so your most valuable holdings are always on top. When off, they follow the fixed profession order.",
+    SI_BMW_SETTING_SORT_BY_VALUE_TOOLTIP = "Order the category rows by descending gold value, so your most valuable holdings are always on top. When off, they follow the fixed profession order. Has no effect while the category breakdown is off.",
     SI_BMW_SETTING_DELTA_MODE_NAME = "\"Since last visit\" baseline",
     SI_BMW_SETTING_DELTA_MODE_TOOLTIP = "What the footer's value-change line compares against. \"Each visit\": the previous time you opened the Craft Bag (persists across restarts). \"Each session\": the first time you opened it after logging in or reloading the UI, so the change accumulates until you log out or /reloadui. In both modes a pure price change (same materials, refreshed prices) shows no delta.",
     SI_BMW_SETTING_DELTA_MODE_VISIT = "Each visit",
