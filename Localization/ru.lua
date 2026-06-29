@@ -97,7 +97,27 @@ local strings = {
     [SI_BMW_DETAIL_GROWTH_NEW] = "-",
     [SI_BMW_DETAIL_EMPTY] = "В этой категории нет материалов.",
     [SI_BMW_DETAIL_SEARCH_HINT] = "Поиск...",
-    [SI_BMW_DETAIL_SEARCH_TITLE] = "Результаты поиска",
+    [SI_BMW_DETAIL_SEARCH_TITLE] = "Результаты поиска (%d)",
+
+    -- Тултип строки в окне детализации: уже посчитанные для колонок цифры,
+    -- раскрытые при наведении. %s несёт сумму в золоте (FormatGold), кроме _QTY
+    -- (локализованное количество) и _CHANGE (цветной процент со знаком).
+    -- _UNPRICED заменяет строки цены, когда цены нет.
+    [SI_BMW_ROW_TOOLTIP_QTY] = "Количество: %s",
+    [SI_BMW_ROW_TOOLTIP_UNIT] = "Цена за штуку: %s",
+    [SI_BMW_ROW_TOOLTIP_TOTAL] = "Стоимость стопки: %s",
+    [SI_BMW_ROW_TOOLTIP_SOURCE] = "Источник цены: %s",
+    [SI_BMW_ROW_TOOLTIP_CHANGE] = "Изменение цены: %s",
+    [SI_BMW_ROW_TOOLTIP_UNPRICED] = "Цена недоступна",
+
+    -- Строка-итог под списком детализации. Вид категории/поиска: число материалов,
+    -- общая стоимость (FormatGold) и доля списка в стоимости всей сумки. Вид
+    -- изменений: чистое движение золота плюс сколько материалов прибавилось / убыло.
+    [SI_BMW_DETAIL_FOOTER_COUNT] = "Материалов: %d",
+    [SI_BMW_DETAIL_FOOTER_SHARE] = "%d%% от сумки",
+    [SI_BMW_DETAIL_FOOTER_NET] = "Итог:",
+    [SI_BMW_DETAIL_FOOTER_GAINED] = "%d вверх",
+    [SI_BMW_DETAIL_FOOTER_LOST] = "%d вниз",
 
     -- Snapshot + diff view
     [SI_BMW_DETAIL_BTN_REMEMBER] = "Запомнить",
@@ -106,6 +126,18 @@ local strings = {
     [SI_BMW_DETAIL_BTN_CHANGES] = "Изменения",
     [SI_BMW_DETAIL_BTN_CHANGES_TOOLTIP_TITLE] = "Изменения с момента снимка",
     [SI_BMW_DETAIL_BTN_CHANGES_TOOLTIP_BODY] = "Показать, как изменилась ремесленная сумка с момента сохранённого снимка: какие материалы добавились, убыли или изменились в количестве, и стоимость каждого движения в золоте. Сначала нажмите «Запомнить», чтобы сделать снимок.",
+    -- Очищает сохранённый снимок, чтобы «Изменениям» было не с чем сравнивать до
+    -- следующего «Запомнить». С подтверждением: снимок - единственная сохранённая
+    -- база, и очистку нельзя отменить.
+    [SI_BMW_DETAIL_BTN_CLEAR] = "Очистить",
+    [SI_BMW_DETAIL_BTN_CLEAR_TOOLTIP_TITLE] = "Очистить снимок",
+    [SI_BMW_DETAIL_BTN_CLEAR_TOOLTIP_BODY] = "Забыть сохранённый снимок. Вид изменений будет пуст, пока вы не нажмёте «Запомнить» и не сделаете новый. Снимок один, поэтому отменить это нельзя.",
+    -- Диалог подтверждения перед очисткой снимка, чтобы случайный клик не стёр
+    -- базу. _ACCEPT - кнопка подтверждения; отмена - стандартная отмена диалога.
+    [SI_BMW_DETAIL_CLEAR_CONFIRM_TITLE] = "Очистить снимок?",
+    [SI_BMW_DETAIL_CLEAR_CONFIRM_BODY] = "Это забудет сохранённый снимок. Вид изменений будет пуст, пока вы снова не нажмёте «Запомнить». Снимок один, поэтому отменить это нельзя.",
+    [SI_BMW_DETAIL_CLEAR_CONFIRM_ACCEPT] = "Очистить",
+    [SI_BMW_DETAIL_CLEAR_CONFIRM_CANCEL] = "Отмена",
     [SI_BMW_DETAIL_BTN_BACK] = "Назад",
     [SI_BMW_DETAIL_BTN_BACK_TOOLTIP_TITLE] = "Назад к материалам",
     [SI_BMW_DETAIL_BTN_BACK_TOOLTIP_BODY] = "Вернуться из вида изменений к списку материалов.",
@@ -164,6 +196,14 @@ local strings = {
     [SI_BMW_TIME_SECONDS] = "%d с назад",
     [SI_BMW_TIME_MINUTES] = "%d мин назад",
     [SI_BMW_TIME_HOURS] = "%d ч назад",
+    -- Составное «сколько назад» для заголовка диффа снимка, который (в отличие от
+    -- футера) может охватывать дни. Возраст строится из двух старших ненулевых
+    -- единиц («5д 3ч», «3ч 20м», «45м»), затем оборачивается _AGO - порядок слов
+    -- задаётся локализацией.
+    [SI_BMW_TIME_UNIT_DAYS] = "%dд",
+    [SI_BMW_TIME_UNIT_HOURS] = "%dч",
+    [SI_BMW_TIME_UNIT_MINUTES] = "%dм",
+    [SI_BMW_TIME_AGO] = "%s назад",
 
     -- Material categories
     [SI_BMW_CATEGORY_BLACKSMITHING] = "Кузнечное дело",
@@ -203,6 +243,10 @@ local strings = {
     [SI_BMW_MSG_VISIT_DELTA] = "Ремесленная сумка стоит %s золота (%s%s с прошлого визита).",
     [SI_BMW_MSG_VISIT_TOTAL] = "Ремесленная сумка стоит %s золота.",
     [SI_BMW_MSG_REFRESH_DONE] = "Цены обновлены.",
+    -- Подтверждение в чат при сохранении/очистке снимка из окна детализации.
+    -- _SAVED: %d = ячейки (уникальные материалы), %s = общая сумма золота.
+    [SI_BMW_MSG_SNAPSHOT_SAVED] = "Снимок сохранён: %d ячеек, %s золота.",
+    [SI_BMW_MSG_SNAPSHOT_CLEARED] = "Снимок очищен.",
     [SI_BMW_MSG_DEBUG_MODE_SET] = "Режим отладки: %s (%d).",
     [SI_BMW_MSG_INVALID_DEBUG_LEVEL] = "Неверный уровень отладки. Используйте число от 0 до 4.",
     [SI_BMW_MSG_SETTINGS_UNAVAILABLE] = "Панель настроек недоступна (LibAddonMenu-2.0 не найден).",

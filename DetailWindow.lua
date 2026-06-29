@@ -7,6 +7,7 @@ local private = addon.private
 local GetString = GetString
 local stringformat = string.format
 local zo_round = zo_round
+local zo_floor = zo_floor
 local mathabs = math.abs
 local tablesort = table.sort
 local GetTimeStamp = GetTimeStamp
@@ -82,10 +83,16 @@ local HEADER_HEIGHT = 20
 local DIVIDER_GAP  = 10
 local ROW_HEIGHT   = 26
 local LIST_MAX_ROWS = 16   -- beyond this the list scrolls instead of growing
+local FOOTER_HEIGHT = 18   -- summary line beneath the list (divider + this label)
 local BG_ALPHA     = 0.92
 
 -- Single row data type id for the scroll list (we only have one kind of row).
 local ROW_TYPE_ID = 1
+
+-- Identifier for the "clear snapshot?" confirmation dialog, registered once in
+-- Initialize. Clearing is destructive (one snapshot, no undo), so a stray click
+-- on the toolbar button must not wipe the baseline without a confirm.
+local CLEAR_SNAPSHOT_DIALOG = "BUREAU_OF_MATERIAL_WORTH_CLEAR_SNAPSHOT"
 
 local function Colorize(hex, text)
     return stringformat("|c%s%s|r", hex, text)
@@ -96,23 +103,48 @@ local function FormatGold(amount)
 end
 
 -- "How long ago" for the diff title, from a unix timestamp (GetTimeStamp) to a
--- short localized phrase. Reuses the footer's SI_BMW_TIME_* buckets. Note this
--- works off the unix clock, NOT GetGameTimeMilliseconds like Window's footer:
--- the snapshot persists across sessions, so its age must survive a restart.
+-- short localized phrase. Note this works off the unix clock, NOT
+-- GetGameTimeMilliseconds like Window's footer: the snapshot persists across
+-- sessions, so its age must survive a restart. Unlike the footer (game-time, so
+-- never more than a session old) this can span days, so it composes the largest
+-- non-zero unit plus the next smaller one - "5d 3h", "3h 20m", "45m" - instead
+-- of an unbounded hour count like "123h". The _AGO wrapper keeps word order
+-- localizable.
 local function FormatSnapshotAge(stampSeconds)
     if not stampSeconds then
         return GetString(SI_BMW_TIME_NEVER)
     end
+
     local seconds = GetTimeStamp() - stampSeconds
     if seconds < 5 then
         return GetString(SI_BMW_TIME_JUST_NOW)
     elseif seconds < 60 then
         return stringformat(GetString(SI_BMW_TIME_SECONDS), seconds)
-    elseif seconds < 3600 then
-        return stringformat(GetString(SI_BMW_TIME_MINUTES), zo_round(seconds / 60))
-    else
-        return stringformat(GetString(SI_BMW_TIME_HOURS), zo_round(seconds / 3600))
     end
+
+    local totalMinutes = zo_floor(seconds / 60)
+    local days = zo_floor(totalMinutes / (60 * 24))
+    local hours = zo_floor((totalMinutes - days * 60 * 24) / 60)
+    local minutes = totalMinutes - days * 60 * 24 - hours * 60
+
+    -- Largest non-zero unit + the immediately smaller one (when non-zero), capped
+    -- at two parts so the phrase stays compact and never jumps a zero unit.
+    local parts = {}
+    if days > 0 then
+        parts[1] = stringformat(GetString(SI_BMW_TIME_UNIT_DAYS), days)
+        if hours > 0 then
+            parts[2] = stringformat(GetString(SI_BMW_TIME_UNIT_HOURS), hours)
+        end
+    elseif hours > 0 then
+        parts[1] = stringformat(GetString(SI_BMW_TIME_UNIT_HOURS), hours)
+        if minutes > 0 then
+            parts[2] = stringformat(GetString(SI_BMW_TIME_UNIT_MINUTES), minutes)
+        end
+    else
+        parts[1] = stringformat(GetString(SI_BMW_TIME_UNIT_MINUTES), minutes)
+    end
+
+    return stringformat(GetString(SI_BMW_TIME_AGO), table.concat(parts, " "))
 end
 
 -- Runtime control references, created once in Initialize().
@@ -122,6 +154,8 @@ local titleLabel      -- "<Category> - materials"
 local headerName, headerQty, headerValue, headerCum, headerChange  -- column headers
 local divider
 local listControl     -- ZO_ScrollList
+local footerDivider   -- rule above the summary line
+local footerLabel     -- summary beneath the list (count/value/share, or diff net)
 local emptyLabel      -- shown when the category has no materials
 local currentCategoryId  -- remembered so a refresh can rebuild the same view
 local currentCategoryName  -- remembered so the title can restore after a search
@@ -129,6 +163,8 @@ local searchBox       -- the search editbox
 local changesButton   -- toolbar button; toggles between "Changes" and "Back"
 local searchQuery = ""  -- current search text; "" means "show the category"
 local suppressSearchEvent = false  -- guards the search box against its own SetText
+local currentResultCount = 0  -- rows in the list just built by Populate; feeds the
+                              -- search-result counter in the title
 
 -- Which list the window is showing. "category" is the normal per-category table
 -- (with the whole-bag search as a sub-state, driven by searchQuery); "diff" is
@@ -150,6 +186,23 @@ local sortAsc = false
 -- capture these as upvalues; they are defined (as plain assignments) further
 -- down, after Initialize.
 local FillList, Populate, UpdateTitle, UpdateHeaders
+
+-- Build the colored price-change text for a material row: an up/down arrow (the
+-- texture carries the direction) plus a colored magnitude, matching Window.lua's
+-- footer-delta idiom. Returns nil when there is no comparable change (no price,
+-- no baseline yet, or no recorded percent) so the caller can fall back to a dash.
+-- Shared by the Change column and the row hover tooltip so the two never drift.
+local function FormatGrowthText(data)
+    if data.priced and not data.isNew and data.growthPercent ~= nil then
+        local gain = data.growthDir
+        local color = gain and COLOR_GAIN or COLOR_LOSS
+        local arrow = gain and ARROW_UP or ARROW_DOWN
+        local magnitude = stringformat("%.1f", mathabs(data.growthPercent))
+        return arrow .. " " .. Colorize(color,
+            stringformat(GetString(SI_BMW_DETAIL_GROWTH), magnitude))
+    end
+    return nil
+end
 
 -- Render the Qty / Value / Cumulative / Change columns for a normal material row
 -- (category view or whole-bag search). Split out of SetupRow so the diff view can
@@ -177,13 +230,9 @@ local function SetupMaterialColumns(rowControl, data)
     -- plus a colored magnitude, matching Window.lua's footer-delta idiom. A
     -- material with no recorded baseline yet, or no price at all, shows a dash.
     local changeLabel = rowControl:GetNamedChild("Change")
-    if data.priced and not data.isNew and data.growthPercent ~= nil then
-        local gain = data.growthDir
-        local color = gain and COLOR_GAIN or COLOR_LOSS
-        local arrow = gain and ARROW_UP or ARROW_DOWN
-        local magnitude = stringformat("%.1f", mathabs(data.growthPercent))
-        changeLabel:SetText(arrow .. " " .. Colorize(color,
-            stringformat(GetString(SI_BMW_DETAIL_GROWTH), magnitude)))
+    local growthText = FormatGrowthText(data)
+    if growthText then
+        changeLabel:SetText(growthText)
     else
         changeLabel:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_DETAIL_GROWTH_NEW)))
     end
@@ -309,11 +358,52 @@ local function SetupRow(rowControl, data)
         end)
 
         rowControl:SetHandler("OnMouseEnter", function(self)
-            -- No withdraw affordance on diff rows, so no hint tooltip there.
-            if self.bmwData and self.bmwData.diff then
+            local rowData = self.bmwData
+            -- Diff rows carry a different shape (deltas/status, no source slot) and
+            -- no withdraw affordance, so they get no hover tooltip.
+            if not rowData or rowData.diff then
                 return
             end
+
             InitializeTooltip(InformationTooltip, self, BOTTOM, 0, -2, TOP)
+
+            -- Title: the quality-colored material name (the |c codes are carried in
+            -- the string itself, so the AddLine r,g,b is just the uncolored base).
+            InformationTooltip:AddLine(
+                addon.Valuation.ColorizeMaterialName(rowData.name, rowData.quality),
+                "ZoFontHeader2", 0.86, 0.85, 0.78)
+            ZO_Tooltip_AddDivider(InformationTooltip)
+
+            -- The figures already computed for the columns, spelled out. Quantity
+            -- always applies; the price lines only when the material is priced,
+            -- otherwise a single "no price" line so the row never looks broken.
+            InformationTooltip:AddLine(stringformat(GetString(SI_BMW_ROW_TOOLTIP_QTY),
+                ZO_LocalizeDecimalNumber(rowData.count or 0)), "ZoFontGame", 0.78, 0.77, 0.72)
+
+            if rowData.priced and rowData.unitPrice and rowData.unitPrice > 0 then
+                InformationTooltip:AddLine(stringformat(GetString(SI_BMW_ROW_TOOLTIP_UNIT),
+                    FormatGold(rowData.unitPrice)), "ZoFontGame", 0.78, 0.77, 0.72)
+                InformationTooltip:AddLine(stringformat(GetString(SI_BMW_ROW_TOOLTIP_TOTAL),
+                    FormatGold(rowData.gold)), "ZoFontGame", 0.78, 0.77, 0.72)
+                local sourceName = rowData.source and addon.Valuation.GetSourceDisplayName(rowData.source)
+                if sourceName then
+                    InformationTooltip:AddLine(stringformat(GetString(SI_BMW_ROW_TOOLTIP_SOURCE),
+                        sourceName), "ZoFontGame", 0.78, 0.77, 0.72)
+                end
+                -- Price-change line, only when there's a comparable figure (shares
+                -- the arrow+color idiom of the Change column via FormatGrowthText).
+                local growthText = FormatGrowthText(rowData)
+                if growthText then
+                    InformationTooltip:AddLine(stringformat(GetString(SI_BMW_ROW_TOOLTIP_CHANGE),
+                        growthText), "ZoFontGame", 0.78, 0.77, 0.72)
+                end
+            else
+                InformationTooltip:AddLine(GetString(SI_BMW_ROW_TOOLTIP_UNPRICED),
+                    "ZoFontGame", 0.82, 0.56, 0.37)
+            end
+
+            -- Interaction hint last, set off by a divider so it reads as a footer.
+            ZO_Tooltip_AddDivider(InformationTooltip)
             InformationTooltip:AddLine(GetString(SI_BMW_WITHDRAW_HINT),
                 "ZoFontGameSmall", 0.55, 0.79, 0.62)
         end)
@@ -338,6 +428,32 @@ function DetailWindow.Initialize()
     windowControl:SetMovable(true)
     -- Center on first show; the user can drag it from there.
     windowControl:SetAnchor(CENTER, GuiRoot, CENTER, 0, 0)
+
+    -- Confirmation dialog for the destructive "Clear snapshot" action. Registered
+    -- once; the accept callback does the actual clear so a stray button click only
+    -- opens the prompt. Uses the standard two-button ESO dialog so it matches the
+    -- game's look and the cancel path needs no custom wiring.
+    ZO_Dialogs_RegisterCustomDialog(CLEAR_SNAPSHOT_DIALOG, {
+        title = { text = GetString(SI_BMW_DETAIL_CLEAR_CONFIRM_TITLE) },
+        mainText = { text = GetString(SI_BMW_DETAIL_CLEAR_CONFIRM_BODY) },
+        buttons = {
+            {
+                text = GetString(SI_BMW_DETAIL_CLEAR_CONFIRM_ACCEPT),
+                callback = function()
+                    addon.Valuation.ClearSnapshot()
+                    private.ChatInfo(SI_BMW_MSG_SNAPSHOT_CLEARED)
+                    -- Refresh the diff view in place so it drops to the "press
+                    -- Remember" empty state immediately after the clear.
+                    if viewMode == "diff" then
+                        Populate()
+                    end
+                end,
+            },
+            {
+                text = GetString(SI_BMW_DETAIL_CLEAR_CONFIRM_CANCEL),
+            },
+        },
+    })
 
     backdrop = WINDOW_MANAGER:CreateControl(addon.name .. "_DetailBackdrop", windowControl, CT_BACKDROP)
     backdrop:SetAnchorFill(windowControl)
@@ -418,7 +534,6 @@ function DetailWindow.Initialize()
         -- open (which would otherwise re-trigger this and clobber the view).
         if not suppressSearchEvent then
             searchQuery = searchBox:GetText() or ""
-            UpdateTitle()
             Populate()
         end
         searchHint:SetHidden((searchBox:GetText() or "") ~= "")
@@ -453,11 +568,16 @@ function DetailWindow.Initialize()
     rememberButton:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, toolbarY)
     rememberButton:SetText(GetString(SI_BMW_DETAIL_BTN_REMEMBER))
     rememberButton:SetHandler("OnClicked", function()
-        addon.Valuation.CaptureSnapshot()
+        local snapshot = addon.Valuation.CaptureSnapshot()
+        -- Confirm the save in chat with what was captured, so the action has
+        -- visible feedback even when the diff view isn't open to show the reset.
+        if snapshot then
+            private.ChatInfo(SI_BMW_MSG_SNAPSHOT_SAVED, snapshot.slots or 0,
+                ZO_LocalizeDecimalNumber(zo_round(snapshot.gold or 0)))
+        end
         -- If the diff view is open, refresh it so it reflects the new baseline
         -- (it will now read "nothing changed"); otherwise just leave it.
         if viewMode == "diff" then
-            UpdateTitle()
             Populate()
         end
     end)
@@ -495,6 +615,24 @@ function DetailWindow.Initialize()
     changesButton:SetHandler("OnMouseExit", function()
         ClearTooltip(InformationTooltip)
     end)
+
+    -- "Clear" forgets the saved snapshot. Sits after "Changes" on the toolbar.
+    -- No modal confirm: "Remember" already overwrites the snapshot without one, so
+    -- requiring confirmation only here would be inconsistent; the hover tooltip
+    -- carries the "cannot be undone" warning. When the diff view is open, clearing
+    -- refreshes it so it drops to the "press Remember" empty state immediately.
+    local clearButton = WINDOW_MANAGER:CreateControlFromVirtual(
+        addon.name .. "_DetailClear", windowControl, "ZO_DefaultButton")
+    clearButton:SetDimensions(BUTTON_WIDTH, TITLE_HEIGHT)
+    clearButton:SetAnchor(TOPLEFT, changesButton, TOPRIGHT, 8, 0)
+    clearButton:SetText(GetString(SI_BMW_DETAIL_BTN_CLEAR))
+    clearButton:SetHandler("OnClicked", function()
+        -- Destructive and not undoable, so confirm before clearing. The dialog's
+        -- accept callback (registered below) does the actual clear + chat notice.
+        ZO_Dialogs_ShowDialog(CLEAR_SNAPSHOT_DIALOG)
+    end)
+    WireButtonTooltip(clearButton, SI_BMW_DETAIL_BTN_CLEAR_TOOLTIP_TITLE,
+        SI_BMW_DETAIL_BTN_CLEAR_TOOLTIP_BODY)
 
     -- Column headers, aligned to the same geometry as the XML row template. They
     -- sit below the toolbar row.
@@ -625,7 +763,26 @@ function DetailWindow.Initialize()
     emptyLabel:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_DETAIL_EMPTY)))
     emptyLabel:SetHidden(true)
 
-    windowControl:SetHeight(listY + ROW_HEIGHT * LIST_MAX_ROWS + PADDING)
+    -- Summary line beneath the list, mirroring the main panel's footer so the two
+    -- windows read as one family. A divider sets it off from the list; the label
+    -- itself is filled by UpdateFooter for the active view (category/search count +
+    -- value + bag share, or the diff's net movement). Right-aligned so the figure
+    -- sits under the value columns.
+    local footerDividerY = listY + ROW_HEIGHT * LIST_MAX_ROWS + DIVIDER_GAP
+    footerDivider = WINDOW_MANAGER:CreateControl(addon.name .. "_DetailFooterDivider", windowControl, CT_TEXTURE)
+    footerDivider:SetTexture("EsoUI/Art/Miscellaneous/horizontalDivider.dds")
+    footerDivider:SetDimensions(innerWidth, 4)
+    footerDivider:SetColor(1, 1, 1, 0.4)
+    footerDivider:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, footerDividerY)
+
+    footerLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_DetailFooter", windowControl, CT_LABEL)
+    footerLabel:SetFont("ZoFontGameSmall")
+    footerLabel:SetHorizontalAlignment(TEXT_ALIGN_RIGHT)
+    footerLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+    footerLabel:SetDimensions(innerWidth, FOOTER_HEIGHT)
+    footerLabel:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, footerDividerY + DIVIDER_GAP)
+
+    windowControl:SetHeight(footerDividerY + DIVIDER_GAP + FOOTER_HEIGHT + PADDING)
 end
 
 -- Fill the scroll list from a prebuilt materials array.
@@ -786,6 +943,70 @@ local function AssignCumulativeShare(materials)
     end
 end
 
+-- Fill the summary line beneath the list from the just-built materials array.
+-- Mirrors the main panel's footer so the two windows read as one family.
+--   category/search : "Materials: N · <total> · M% of bag" - the count, the summed
+--                     value of the shown rows, and that value's share of the whole
+--                     bag (omitted when the bag total is zero / unavailable).
+--   diff            : "Net: <signed gold> · X up · Y down" - the net gold movement
+--                     and how many materials rose vs fell.
+-- Records the row count for the title's search counter as a side effect, so the
+-- two always agree. An empty list shows a plain count (or net of zero) rather than
+-- blanking, so the line never looks broken.
+local function UpdateFooter(materials)
+    currentResultCount = #materials
+
+    if viewMode == "diff" then
+        local net, up, down = 0, 0, 0
+        for i = 1, #materials do
+            local delta = materials[i].goldDelta or 0
+            net = net + delta
+            -- Count direction by the quantity move, not the gold figure, so an
+            -- unpriced add/remove (goldDelta 0) is still tallied.
+            if (materials[i].countDelta or 0) >= 0 then
+                up = up + 1
+            else
+                down = down + 1
+            end
+        end
+
+        local gain = net >= 0
+        local color = gain and COLOR_GAIN or COLOR_LOSS
+        local arrow = gain and ARROW_UP or ARROW_DOWN
+        local netText = arrow .. " " .. Colorize(color,
+            ZO_LocalizeDecimalNumber(zo_round(mathabs(net)))) .. " " .. GOLD_ICON
+        local parts = {
+            Colorize(COLOR_MUTED, GetString(SI_BMW_DETAIL_FOOTER_NET)) .. " " .. netText,
+            Colorize(COLOR_GAIN, stringformat(GetString(SI_BMW_DETAIL_FOOTER_GAINED), up)),
+            Colorize(COLOR_LOSS, stringformat(GetString(SI_BMW_DETAIL_FOOTER_LOST), down)),
+        }
+        footerLabel:SetText(table.concat(parts, Colorize(COLOR_MUTED, "  ·  ")))
+        return
+    end
+
+    -- Category / search view: count + summed value + share of the whole bag.
+    local total = 0
+    for i = 1, #materials do
+        total = total + (materials[i].gold or 0)
+    end
+
+    local parts = {
+        Colorize(COLOR_MUTED, stringformat(GetString(SI_BMW_DETAIL_FOOTER_COUNT), #materials)),
+        FormatGold(total),
+    }
+
+    -- Share of the whole bag's value, when the grand total is known and non-zero.
+    -- GetStatus returns the live grand total cheaply (no category rebuild).
+    local grandGold = addon.Valuation.GetStatus()
+    if grandGold and grandGold > 0 then
+        local share = zo_round(total / grandGold * 100)
+        parts[#parts + 1] = Colorize(COLOR_MUTED,
+            stringformat(GetString(SI_BMW_DETAIL_FOOTER_SHARE), share))
+    end
+
+    footerLabel:SetText(table.concat(parts, Colorize(COLOR_MUTED, "  ·  ")))
+end
+
 -- Rebuild the scroll list for the current view. Three sources route through here:
 -- the diff list (viewMode == "diff"), the whole-bag search results (a query is
 -- active), or the current category. Centralized so the search box, a category
@@ -799,6 +1020,8 @@ function Populate()
             -- No snapshot to diff against: show the "press Remember" prompt.
             emptyLabel:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_DETAIL_NO_SNAPSHOT)))
             FillList({})
+            UpdateFooter({})
+            UpdateTitle()
             return
         end
         materials = addon.Valuation.GetDiffMaterials()
@@ -817,6 +1040,11 @@ function Populate()
     SortMaterials(materials)
     AssignCumulativeShare(materials)
     FillList(materials)
+    UpdateFooter(materials)
+    -- The title's search counter reflects what was just built, so refresh it here
+    -- (after UpdateFooter set the count) rather than at each call site. This also
+    -- keeps the live Refresh path's counter truthful as stock changes.
+    UpdateTitle()
 end
 
 -- Keep the title in step with the view: the diff label while comparing, the
@@ -833,7 +1061,10 @@ function UpdateTitle()
         titleLabel:SetText(Colorize(COLOR_ACCENT,
             stringformat(GetString(SI_BMW_DETAIL_DIFF_TITLE), whenText)))
     elseif searchQuery ~= "" then
-        titleLabel:SetText(Colorize(COLOR_ACCENT, GetString(SI_BMW_DETAIL_SEARCH_TITLE)))
+        -- Search title carries the match count (set by UpdateFooter, which runs
+        -- just before this in Populate) so the user sees how many rows matched.
+        titleLabel:SetText(Colorize(COLOR_ACCENT,
+            stringformat(GetString(SI_BMW_DETAIL_SEARCH_TITLE), currentResultCount)))
     else
         titleLabel:SetText(Colorize(COLOR_ACCENT,
             stringformat(GetString(SI_BMW_DETAIL_TITLE), currentCategoryName or "")))
@@ -920,7 +1151,6 @@ function DetailWindow.Show(categoryId, categoryName)
 
     UpdateChangesButton()
     UpdateHeaders()
-    UpdateTitle()
     Populate()
     windowControl:SetHidden(false)
     windowControl:BringWindowToTop()
@@ -946,7 +1176,6 @@ function DetailWindow.ShowMaterials()
 
     UpdateChangesButton()
     UpdateHeaders()
-    UpdateTitle()
     Populate()
 end
 
@@ -968,7 +1197,6 @@ function DetailWindow.ShowDiff()
 
     UpdateChangesButton()
     UpdateHeaders()
-    UpdateTitle()
     Populate()
     windowControl:SetHidden(false)
     windowControl:BringWindowToTop()

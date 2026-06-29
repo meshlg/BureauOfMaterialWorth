@@ -215,7 +215,7 @@ function Settings.RegisterSettingsPanel()
         type = "panel",
         name = GetString(SI_BMW_PANEL_NAME),
         displayName = GetString(SI_BMW_PANEL_DISPLAY_NAME),
-        author = "|c6FCB9Fmeshlg|r",
+        author = "|c6FCB9Fmeshlg|r @ArtieFox",
         version = addon.version,
         slashCommand = "/bmwsettings",
         registerForRefresh = true,

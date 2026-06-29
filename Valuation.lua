@@ -128,6 +128,13 @@ local function SourceShortName(sourceKey)
     return SOURCE_SHORT_NAMES[sourceKey] or string.upper(sourceKey)
 end
 
+-- Public: resolve a LibPrice source key ("mm"/"ttc"/...) to its full display name
+-- ("Master Merchant"/...). Exposed so the detail-row tooltip can name the price
+-- source carried on each material row. Returns nil for a nil key.
+function Valuation.GetSourceDisplayName(sourceKey)
+    return SourceDisplayName(sourceKey)
+end
+
 -- Category model
 -- ---------------------------------------------------------------------------
 -- Categories mirror the crafting professions the craft bag is organized by.
@@ -571,12 +578,31 @@ function Valuation.OnCraftBagShown()
         FullRescan()
     end
 
+    -- One-time convenience baseline: take an automatic snapshot the first time a
+    -- populated bag is opened and no snapshot exists yet, so the "Changes" view
+    -- works without first pressing "Remember". Strictly gated so it never
+    -- surprises a user or wipes their data:
+    --   * not HasSnapshot()  -- never overwrite an existing snapshot; this is the
+    --     guard that protects a manual snapshot (a user with one is never touched).
+    --   * autoSnapshotDone    -- persisted, so it fires at most once ever and a
+    --     later manual "Clear" does not re-arm it.
+    --   * grandSlots > 0      -- real content, not an empty bag captured before
+    --     login finished populating it.
+    -- It is NOT a per-login capture: opening/closing the bag across sessions never
+    -- re-snapshots. After this one time the snapshot is fully user-owned.
+    local sv = private.savedVars
+    if sv and not sv.autoSnapshotDone
+        and not Valuation.HasSnapshot() and grandSlots > 0 then
+        sv.autoSnapshotDone = true
+        Valuation.CaptureSnapshot()
+    end
+
     -- "Since last visit" delta, computed once per open so incremental updates
     -- during the visit don't move it under the user. The baseline depends on the
     -- configured mode; in both, the gold delta is gated on the item count
     -- changing so a pure price drift (restart + reimport, same stock) shows
-    -- nothing rather than a misleading "+2M".
-    local sv = private.savedVars
+    -- nothing rather than a misleading "+2M". (sv is the same savedVars handle
+    -- resolved above for the auto-snapshot.)
     local mode = (sv and sv.deltaMode) or "visit"
 
     if mode == "session" then
@@ -865,6 +891,10 @@ local function BuildMaterialRow(slotIndex, info)
         gold = info.value,
         unitPrice = unitPrice,
         priced = info.priced,
+        -- The LibPrice source key ("mm"/"ttc"/...) this slot's price came from, so
+        -- the detail-row tooltip can name where the figure originates. nil when
+        -- unpriced. Resolve to a display name via Valuation.GetSourceDisplayName.
+        source = info.source,
         growthPercent = growthPercent,
         growthDir = growthDir,
         isNew = isNew,
@@ -935,11 +965,27 @@ end
 -- ("Changes"). Stored in savedVars so it survives restarts. Shape:
 --   snapshot = {
 --     t, gold, items, slots,                 -- header captured at Remember time
---     materials = { [itemId] = { name, icon, quality, count, unitPrice, gold,
---                                priced } },
+--     materials = { [itemId] = { link, name, icon, quality, count, unitPrice,
+--                                gold, priced } },
 --   }
--- name/icon/quality are stored (not re-resolved at diff time) because a material
--- that has since left the bag has no live slot or item link to resolve from.
+-- The item link is stored (not just the resolved name) because a name is frozen
+-- in the language that was active at Remember time, but a link is language-
+-- independent: GetItemLinkName re-resolves it into the CURRENT game language at
+-- diff time, even for a material that has since left the bag (no live slot). The
+-- resolved `name` is also kept as a fallback for snapshots taken before the link
+-- was persisted. icon/quality are language-independent, so storing them is fine.
+
+-- Resolve a snapshot material's display name in the current game language. Item
+-- links are language-independent, so re-resolving from the stored link each
+-- render keeps removed/changed rows in the active language rather than the one
+-- the snapshot was captured in. Falls back to the stored name for older
+-- snapshots that predate the persisted link.
+local function SnapshotMaterialName(entry)
+    if entry.link and entry.link ~= "" then
+        return zo_strformat(SI_TOOLTIP_ITEM_NAME, GetItemLinkName(entry.link))
+    end
+    return entry.name
+end
 
 -- Aggregate the current slotInfo by itemId. In practice the craft bag holds each
 -- material in exactly one slot, but aggregating is robust and keeps the diff keyed
@@ -986,6 +1032,10 @@ function Valuation.CaptureSnapshot()
             local itemLink = GetItemLink(BAG, slotIndex)
             local unitPrice = info.stack > 0 and (info.value / info.stack) or 0
             materials[info.itemId] = {
+                -- Store the language-independent link so the diff view can
+                -- re-resolve the name into the current game language; keep the
+                -- resolved name too as a fallback for the row builders.
+                link = itemLink,
                 name = zo_strformat(SI_TOOLTIP_ITEM_NAME, GetItemLinkName(itemLink)),
                 icon = GetItemLinkIcon(itemLink),
                 quality = GetItemLinkFunctionalQuality(itemLink),
@@ -1004,6 +1054,10 @@ function Valuation.CaptureSnapshot()
         slots = grandSlots,
         materials = materials,
     }
+
+    -- Returned so the caller (the manual "Remember" button) can report what was
+    -- captured in chat; the silent auto-snapshot path ignores the return value.
+    return sv.snapshot
 end
 
 -- Whether a snapshot exists to diff against. Used by the window to pick between
@@ -1011,6 +1065,16 @@ end
 function Valuation.HasSnapshot()
     local sv = private.savedVars
     return sv ~= nil and sv.snapshot ~= nil
+end
+
+-- Forget the saved snapshot (the detail window's "Clear" button). The single-
+-- snapshot model means there is nothing else to fall back to, so the diff view
+-- reverts to its "press Remember" empty state until a new snapshot is taken.
+function Valuation.ClearSnapshot()
+    local sv = private.savedVars
+    if sv then
+        sv.snapshot = nil
+    end
 end
 
 -- Header info for the diff title (the relative-time label is built by the
@@ -1076,7 +1140,7 @@ function Valuation.GetDiffMaterials()
             local countDelta = cur.count - old.count
             rows[#rows + 1] = {
                 itemId = itemId,
-                name = old.name,
+                name = SnapshotMaterialName(old),
                 icon = old.icon,
                 quality = old.quality,
                 diff = true,
@@ -1094,7 +1158,7 @@ function Valuation.GetDiffMaterials()
         if not current[itemId] then
             rows[#rows + 1] = {
                 itemId = itemId,
-                name = old.name,
+                name = SnapshotMaterialName(old),
                 icon = old.icon,
                 quality = old.quality,
                 diff = true,

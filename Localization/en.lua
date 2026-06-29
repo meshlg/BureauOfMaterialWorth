@@ -100,9 +100,30 @@ local strings = {
     -- Shown when a material has no recorded price baseline yet, or no price.
     SI_BMW_DETAIL_GROWTH_NEW = "-",
     SI_BMW_DETAIL_EMPTY = "No materials in this category.",
-    -- Search box (whole craft bag) in the detail window.
+    -- Search box (whole craft bag) in the detail window. The title carries the
+    -- number of matches; %d = result count.
     SI_BMW_DETAIL_SEARCH_HINT = "Search...",
-    SI_BMW_DETAIL_SEARCH_TITLE = "Search results",
+    SI_BMW_DETAIL_SEARCH_TITLE = "Search results (%d)",
+
+    -- Row hover tooltip in the detail window: the figures already computed for the
+    -- columns, spelled out on hover. %s carries a gold-formatted figure
+    -- (FormatGold) except _QTY (a localized count) and _CHANGE (a colored signed
+    -- percent). _UNPRICED replaces the price lines when there is no price.
+    SI_BMW_ROW_TOOLTIP_QTY = "Quantity: %s",
+    SI_BMW_ROW_TOOLTIP_UNIT = "Unit price: %s",
+    SI_BMW_ROW_TOOLTIP_TOTAL = "Stack value: %s",
+    SI_BMW_ROW_TOOLTIP_SOURCE = "Price source: %s",
+    SI_BMW_ROW_TOOLTIP_CHANGE = "Price change: %s",
+    SI_BMW_ROW_TOOLTIP_UNPRICED = "No price available",
+
+    -- Summary line beneath the detail list. Category/search view: a material count,
+    -- the total value (FormatGold), and the list's share of the whole bag's value.
+    -- Diff view: the net gold movement plus how many materials rose / fell.
+    SI_BMW_DETAIL_FOOTER_COUNT = "Materials: %d",
+    SI_BMW_DETAIL_FOOTER_SHARE = "%d%% of bag",
+    SI_BMW_DETAIL_FOOTER_NET = "Net:",
+    SI_BMW_DETAIL_FOOTER_GAINED = "%d up",
+    SI_BMW_DETAIL_FOOTER_LOST = "%d down",
 
     -- Snapshot + diff view (detail window). "Remember" freezes the current bag
     -- composition; "Changes" diffs the live bag against it. One snapshot, manual,
@@ -114,6 +135,19 @@ local strings = {
     SI_BMW_DETAIL_BTN_CHANGES = "Changes",
     SI_BMW_DETAIL_BTN_CHANGES_TOOLTIP_TITLE = "Changes since snapshot",
     SI_BMW_DETAIL_BTN_CHANGES_TOOLTIP_BODY = "Show how the Craft Bag has changed since your saved snapshot: which materials were added, removed, or changed in quantity, and the gold value of each move. Press \"Remember\" first to take a snapshot.",
+    -- Clears the saved snapshot so "Changes" has nothing to diff against until the
+    -- next "Remember". Confirmed because the snapshot is the only persisted
+    -- baseline and clearing it cannot be undone.
+    SI_BMW_DETAIL_BTN_CLEAR = "Clear",
+    SI_BMW_DETAIL_BTN_CLEAR_TOOLTIP_TITLE = "Clear snapshot",
+    SI_BMW_DETAIL_BTN_CLEAR_TOOLTIP_BODY = "Forget the saved snapshot. The changes view will show nothing until you press \"Remember\" to take a new one. There is only one snapshot, so this cannot be undone.",
+    -- Confirmation dialog shown before the snapshot is cleared, so a stray click
+    -- can't wipe the baseline. _CONFIRM is the accept button; cancel reuses the
+    -- standard dialog cancel.
+    SI_BMW_DETAIL_CLEAR_CONFIRM_TITLE = "Clear snapshot?",
+    SI_BMW_DETAIL_CLEAR_CONFIRM_BODY = "This forgets the saved snapshot. The changes view will show nothing until you press \"Remember\" again. There is only one snapshot, so this cannot be undone.",
+    SI_BMW_DETAIL_CLEAR_CONFIRM_ACCEPT = "Clear",
+    SI_BMW_DETAIL_CLEAR_CONFIRM_CANCEL = "Cancel",
     -- In the diff view the "Changes" button becomes a "Back" toggle that returns
     -- to the material list.
     SI_BMW_DETAIL_BTN_BACK = "Back",
@@ -187,6 +221,13 @@ local strings = {
     SI_BMW_TIME_SECONDS = "%ds ago",
     SI_BMW_TIME_MINUTES = "%dm ago",
     SI_BMW_TIME_HOURS = "%dh ago",
+    -- Compound "time ago" for the snapshot diff title, which (unlike the footer)
+    -- can span days. The age is built from the two largest non-zero units (e.g.
+    -- "5d 3h", "3h 20m", "45m") then wrapped by _AGO so word order is localizable.
+    SI_BMW_TIME_UNIT_DAYS = "%dd",
+    SI_BMW_TIME_UNIT_HOURS = "%dh",
+    SI_BMW_TIME_UNIT_MINUTES = "%dm",
+    SI_BMW_TIME_AGO = "%s ago",
 
     -- Material categories
     SI_BMW_CATEGORY_BLACKSMITHING = "Blacksmithing",
@@ -234,6 +275,10 @@ local strings = {
     SI_BMW_MSG_VISIT_DELTA = "Craft Bag is worth %s gold (%s%s since last visit).",
     SI_BMW_MSG_VISIT_TOTAL = "Craft Bag is worth %s gold.",
     SI_BMW_MSG_REFRESH_DONE = "Prices refreshed.",
+    -- Chat confirmation when the snapshot is saved/cleared from the detail window.
+    -- _SAVED: %d = slots (distinct materials), %s = grand-total gold.
+    SI_BMW_MSG_SNAPSHOT_SAVED = "Snapshot saved: %d slots, %s gold.",
+    SI_BMW_MSG_SNAPSHOT_CLEARED = "Snapshot cleared.",
     SI_BMW_MSG_DEBUG_MODE_SET = "Debug mode set to %s (%d).",
     SI_BMW_MSG_INVALID_DEBUG_LEVEL = "Invalid debug level. Use a number from 0 to 4.",
     SI_BMW_MSG_SETTINGS_UNAVAILABLE = "Settings panel is unavailable (LibAddonMenu-2.0 not found).",
