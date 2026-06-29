@@ -385,6 +385,11 @@ local function SetupRow(rowControl, data)
                     FormatGold(rowData.unitPrice)), "ZoFontGame", 0.78, 0.77, 0.72)
                 InformationTooltip:AddLine(stringformat(GetString(SI_BMW_ROW_TOOLTIP_TOTAL),
                     FormatGold(rowData.gold)), "ZoFontGame", 0.78, 0.77, 0.72)
+                -- Net for this stack after the guild-store fees (1% + 7%), the
+                -- take-home if sold through a trader. Muted green marks it as the
+                -- net figure, matching the grand-total hover on the main panel.
+                InformationTooltip:AddLine(stringformat(GetString(SI_BMW_ROW_TOOLTIP_NET),
+                    FormatGold(private.NetAfterFees(rowData.gold))), "ZoFontGame", 0.44, 0.80, 0.62)
                 local sourceName = rowData.source and addon.Valuation.GetSourceDisplayName(rowData.source)
                 if sourceName then
                     InformationTooltip:AddLine(stringformat(GetString(SI_BMW_ROW_TOOLTIP_SOURCE),
@@ -994,6 +999,14 @@ local function UpdateFooter(materials)
         Colorize(COLOR_MUTED, stringformat(GetString(SI_BMW_DETAIL_FOOTER_COUNT), #materials)),
         FormatGold(total),
     }
+
+    -- Net for the shown rows after the guild-store fees (1% + 7%): the take-home
+    -- if all of this sold through a trader. Only when there's a value to net down.
+    if total > 0 then
+        parts[#parts + 1] = Colorize(COLOR_GAIN,
+            stringformat(GetString(SI_BMW_DETAIL_FOOTER_NET_SOLD),
+                ZO_LocalizeDecimalNumber(zo_round(private.NetAfterFees(total))))) .. " " .. GOLD_ICON
+    end
 
     -- Share of the whole bag's value, when the grand total is known and non-zero.
     -- GetStatus returns the live grand total cheaply (no category rebuild).

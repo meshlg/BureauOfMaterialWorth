@@ -24,6 +24,7 @@ local tonumber = tonumber
 --   lastVisitItems        total item count saved alongside it, to gate the delta on real stock changes
 --   priceHistory          [itemId] = { p = unit price, t = unix timestamp }; baseline for the detail window's price-change column
 --   showValueHistory      draw the grand-total sparkline (Craft Bag value over time) in the footer
+--   showProfile           show the @account handle + character name on the panel's title line
 --   notifyOnVisit         print the bag value (and since-last-visit change) to chat on the first open of each session
 --   valueHistory          ring buffer of grand-total samples; { head = <last index, 0 = empty>,
 --                         entries = { { t = unix, gold, items }, ... } }. See Valuation's
@@ -43,6 +44,7 @@ local DEFAULT_SAVED_VARS = {
     showBackground = true,
     showBorder = false,
     showValueHistory = true,
+    showProfile = true,
     notifyOnVisit = true,
     showInGuildStore = true,
     windowWidth = 400,
@@ -129,6 +131,7 @@ function Settings.RegisterSettingsPanel()
     local function IsColorScaleOn()   return GetSavedVarsOrDefaults().colorScaleGold ~= false end
     local function IsSortByValueOn()  return GetSavedVarsOrDefaults().sortByValue == true end
     local function IsValueHistoryOn() return GetSavedVarsOrDefaults().showValueHistory ~= false end
+    local function IsProfileOn()      return GetSavedVarsOrDefaults().showProfile ~= false end
     local function IsNotifyOn()       return GetSavedVarsOrDefaults().notifyOnVisit ~= false end
     local function IsGuildStoreOn()   return GetSavedVarsOrDefaults().showInGuildStore ~= false end
     local function GetDeltaMode()     return GetSavedVarsOrDefaults().deltaMode or DEFAULT_SAVED_VARS.deltaMode end
@@ -204,6 +207,7 @@ function Settings.RegisterSettingsPanel()
             StatusRow(SI_BMW_STATUS_LABEL_SORT,          ModeValue(SortWord())),
             StatusRow(SI_BMW_STATUS_LABEL_COLOR_SCALE,   StatusOnOff(IsColorScaleOn())),
             StatusRow(SI_BMW_STATUS_LABEL_VALUE_HISTORY, StatusOnOff(IsValueHistoryOn())),
+            StatusRow(SI_BMW_STATUS_LABEL_PROFILE,       StatusOnOff(IsProfileOn())),
             StatusRow(SI_BMW_STATUS_LABEL_NOTIFY,        StatusOnOff(IsNotifyOn())),
             StatusRow(SI_BMW_STATUS_LABEL_GUILD_STORE,   StatusOnOff(IsGuildStoreOn())),
             StatusRow(SI_BMW_STATUS_LABEL_DELTA,         ModeValue(DeltaWord())),
@@ -385,6 +389,20 @@ function Settings.RegisterSettingsPanel()
                 end
             end,
             default = DEFAULT_SAVED_VARS.showValueHistory,
+            width = "full",
+        },
+        {
+            type = "checkbox",
+            name = GetString(SI_BMW_SETTING_PROFILE_NAME),
+            tooltip = GetString(SI_BMW_SETTING_PROFILE_TOOLTIP),
+            getFunc = function() return IsProfileOn() end,
+            setFunc = function(value)
+                private.savedVars.showProfile = value
+                if addon.Window then
+                    addon.Window.Update()
+                end
+            end,
+            default = DEFAULT_SAVED_VARS.showProfile,
             width = "full",
         },
         {

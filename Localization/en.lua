@@ -19,6 +19,7 @@ local strings = {
     SI_BMW_STATUS_SORT_BY_PROFESSION = "by profession",
     SI_BMW_STATUS_LABEL_COLOR_SCALE = "Color gold by value:",
     SI_BMW_STATUS_LABEL_VALUE_HISTORY = "Value history:",
+    SI_BMW_STATUS_LABEL_PROFILE = "Account label:",
     SI_BMW_STATUS_LABEL_NOTIFY = "Announce in chat:",
     SI_BMW_STATUS_LABEL_GUILD_STORE = "In guild store:",
     SI_BMW_STATUS_LABEL_DELTA = "Change baseline:",
@@ -49,6 +50,8 @@ local strings = {
     SI_BMW_SETTING_BORDER_TOOLTIP = "Draw the panel's border edge. Turn off for a cleaner, frameless look.",
     SI_BMW_SETTING_VALUE_HISTORY_NAME = "Show value history",
     SI_BMW_SETTING_VALUE_HISTORY_TOOLTIP = "Draw a small sparkline of your Craft Bag's total value over time at the bottom of the panel. One point is recorded each time you open the Craft Bag (at most once every few hours), keeping the last 90 points. Hover the sparkline for the oldest, newest, and net-change figures.",
+    SI_BMW_SETTING_PROFILE_NAME = "Show account label",
+    SI_BMW_SETTING_PROFILE_TOOLTIP = "Show your @account handle and current character name on the panel's title line. The Craft Bag is shared across your whole account, so the handle names whose bag this is. Turn off for a cleaner title.",
     SI_BMW_SETTING_NOTIFY_VISIT_NAME = "Announce value in chat",
     SI_BMW_SETTING_NOTIFY_VISIT_TOOLTIP = "Print your Craft Bag's value to chat the first time you open it each session, along with how much it changed since your last visit (when the stock changed). Turn off for no chat output.",
     SI_BMW_SETTING_GUILD_STORE_NAME = "Show in guild store",
@@ -66,6 +69,9 @@ local strings = {
 
     -- Window
     SI_BMW_WINDOW_TITLE = "Craft Bag Worth",
+    -- Account/character label on the title line. %s = @account handle, %s =
+    -- character name. The Craft Bag is account-wide, so the handle leads.
+    SI_BMW_PROFILE_ACCOUNT_CHAR = "%s · %s",
     -- %d = occupied slots (distinct materials), %s = classic 200-item stacks,
     -- %s = total item count.
     SI_BMW_WINDOW_SUBTITLE = "%d slots · %s stacks · %s items",
@@ -75,6 +81,8 @@ local strings = {
 
     -- Window: per-category hover tooltip
     SI_BMW_TOOLTIP_VALUE = "Value: %s gold",
+    -- Net after the guild-store fees (1% listing + 7% sales). %s = gold amount.
+    SI_BMW_TOOLTIP_NET = "Net if sold: %s gold",
     SI_BMW_TOOLTIP_SLOTS = "Slots (distinct materials): %d",
     SI_BMW_TOOLTIP_STACKS = "Stacks of 200: %s",
     SI_BMW_TOOLTIP_ITEMS = "Items: %s",
@@ -112,6 +120,7 @@ local strings = {
     SI_BMW_ROW_TOOLTIP_QTY = "Quantity: %s",
     SI_BMW_ROW_TOOLTIP_UNIT = "Unit price: %s",
     SI_BMW_ROW_TOOLTIP_TOTAL = "Stack value: %s",
+    SI_BMW_ROW_TOOLTIP_NET = "Net if sold: %s",
     SI_BMW_ROW_TOOLTIP_SOURCE = "Price source: %s",
     SI_BMW_ROW_TOOLTIP_CHANGE = "Price change: %s",
     SI_BMW_ROW_TOOLTIP_UNPRICED = "No price available",
@@ -121,6 +130,9 @@ local strings = {
     -- Diff view: the net gold movement plus how many materials rose / fell.
     SI_BMW_DETAIL_FOOTER_COUNT = "Materials: %d",
     SI_BMW_DETAIL_FOOTER_SHARE = "%d%% of bag",
+    -- Net for the shown rows after guild-store fees (category/search footer). %s =
+    -- gold amount; a gold icon is appended in code.
+    SI_BMW_DETAIL_FOOTER_NET_SOLD = "net %s",
     SI_BMW_DETAIL_FOOTER_NET = "Net:",
     SI_BMW_DETAIL_FOOTER_GAINED = "%d up",
     SI_BMW_DETAIL_FOOTER_LOST = "%d down",
@@ -208,8 +220,20 @@ local strings = {
     SI_BMW_FOOTER_DELTA_LABEL = "This visit",
     SI_BMW_FOOTER_DELTA_LABEL_SESSION = "This session",
     SI_BMW_FOOTER_DELTA_VALUE = "%s gold",
+
+    -- Grand-total hover: "net if sold" breakdown of the guild-store selling fees.
+    -- The %% renders a literal percent through string.format. %s = a gold amount.
+    -- _LISTING/_SALES are shown as deductions; _NET is what's left after both.
+    SI_BMW_NET_TOOLTIP_TITLE = "If sold at a guild trader",
+    SI_BMW_NET_TOOLTIP_GROSS = "List price: %s gold",
+    SI_BMW_NET_TOOLTIP_LISTING = "Listing fee (1%%): -%s gold",
+    SI_BMW_NET_TOOLTIP_SALES = "Sales tax (7%%): -%s gold",
+    SI_BMW_NET_TOOLTIP_NET = "You receive (92%%): %s gold",
     -- Value-history sparkline caption + hover tooltip.
     SI_BMW_FOOTER_HISTORY_LABEL = "Value history",
+    -- Min/max scale line beneath the area chart. %s = lowest recorded value, %s =
+    -- highest. Plain hyphen between them (not an en-dash).
+    SI_BMW_HISTORY_SCALE = "%s - %s",
     SI_BMW_HISTORY_TOOLTIP_POINTS = "Recorded points: %d",
     SI_BMW_HISTORY_TOOLTIP_OLDEST = "Oldest: %s gold",
     SI_BMW_HISTORY_TOOLTIP_NEWEST = "Newest: %s gold",

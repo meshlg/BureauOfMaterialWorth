@@ -45,19 +45,26 @@ local SECTION_GAP    = 6    -- small gap between blocks
 local BG_ALPHA       = 0.82
 local EDGE_ALPHA     = 0.9  -- border opacity when the border is shown
 
--- Value-history sparkline geometry. The sparkline is a strip of vertical bars
--- (one per recorded sample) drawn under a small caption in the footer. Bars are
--- CT_BACKDROP fills -- the same primitive the window background uses -- because
--- the UI font can't render the Unicode block glyphs a text sparkline would need
--- (see the arrow note above). SPARK_MIN_BAR_H keeps the lowest sample a visible
--- sliver rather than nothing.
-local SPARK_HEIGHT     = 30  -- bar-strip height in px (the caption sits above it)
-local SPARK_BAR_GAP    = 1   -- horizontal gap between bars
+-- Value-history area chart geometry. The chart is a filled silhouette: one
+-- vertical bar per sample, drawn edge-to-edge (no gap) so the samples read as a
+-- continuous shape rather than separate bars. Bars are CT_BACKDROP fills -- the
+-- same primitive the window background uses -- because the UI font can't render
+-- the Unicode block glyphs a text chart would need (see the arrow note above).
+-- The whole fill is tinted by the series' overall direction (green when the
+-- newest sample sits above the oldest, red when below), with the newest bar
+-- brightened so "now" stands out. A head line above carries the current value +
+-- trend arrow; a scale line below carries the series min and max. SPARK_MIN_BAR_H
+-- keeps the lowest sample a visible sliver rather than nothing.
+local SPARK_HEIGHT     = 40  -- area-strip height in px (head line above, scale below)
 local SPARK_MIN_BAR_H  = 2   -- floor height so the minimum sample still draws
--- Past samples in dim gold, the newest in bright gold so "now" stands out.
--- RGBA floats (CT_BACKDROP wants components, not the hex the labels use).
-local SPARK_BAR_COLOR     = { 0.72, 0.65, 0.40, 0.90 }
-local SPARK_BAR_COLOR_NOW = { 0.96, 0.82, 0.25, 1.00 }
+local SPARK_SCALE_GAP  = 2   -- gap between the strip and the min/max scale line
+-- Area fill + "now" highlight, tinted by trend. RGBA floats (CT_BACKDROP wants
+-- components, not the hex the labels use). The fill is semi-transparent so it
+-- reads as an area wash; the newest bar is opaque and brighter to mark "now".
+local SPARK_AREA_UP       = { 0.42, 0.62, 0.47, 0.80 }  -- rising: green fill
+local SPARK_AREA_UP_NOW   = { 0.56, 0.85, 0.62, 1.00 }
+local SPARK_AREA_DOWN     = { 0.62, 0.42, 0.42, 0.80 }  -- falling: red fill
+local SPARK_AREA_DOWN_NOW = { 0.85, 0.56, 0.56, 1.00 }
 
 -- Expose the width bounds so the settings slider stays in sync with the layout.
 Window.DEFAULT_WIDTH = DEFAULT_WINDOW_WIDTH
@@ -66,6 +73,12 @@ Window.MAX_WIDTH = MAX_WINDOW_WIDTH
 Window.WIDTH_STEP = WINDOW_WIDTH_STEP
 
 local GOLD_ICON = "|t16:16:EsoUI/Art/currency/currency_gold.dds|t"
+
+-- Guild-store selling fees live in the core (private.FEE_*), the single source of
+-- truth shared with the detail window. Bound to locals here for the grand-total
+-- "net if sold" hover; see private.NetAfterFees for the rationale and rates.
+local FEE_LISTING_RATE = private.FEE_LISTING_RATE
+local FEE_SALES_RATE   = private.FEE_SALES_RATE
 
 -- Up/down arrows for the value-change delta. We use the game's own sort-arrow
 -- textures rather than the Unicode ▲/▼ glyphs because the ESO UI font does not
@@ -154,10 +167,33 @@ local function FormatTimeAgo(stampMs)
     end
 end
 
+-- The account-and-character identity shown on the right of the title line. The
+-- Craft Bag is account-wide, so the @account handle is the identity the bag
+-- actually belongs to; the current character name is appended for a touch of
+-- profile flavor. Both are stable for the session, so this is read once on the
+-- first render and cached. GetDisplayName returns the "@handle"; GetUnitName
+-- ("player") the character. A "·" joins them, matching the addon's separator.
+local cachedProfileText
+local function GetProfileText()
+    if cachedProfileText then
+        return cachedProfileText
+    end
+    local account = GetDisplayName() or ""
+    local character = zo_strformat(SI_UNIT_NAME, GetUnitName("player")) or ""
+    if account ~= "" and character ~= "" then
+        cachedProfileText = stringformat(GetString(SI_BMW_PROFILE_ACCOUNT_CHAR), account, character)
+    else
+        -- Fall back to whichever is available rather than an empty/orphaned "·".
+        cachedProfileText = account ~= "" and account or character
+    end
+    return cachedProfileText
+end
+
 -- Runtime control references, created once in Initialize().
 local windowControl   -- top-level container
 local backdrop        -- background + border fill (toggled by appearance settings)
 local titleLabel      -- "Craft Bag Worth"
+local profileLabel    -- "@account · Character" on the right of the title line
 local totalLabel      -- prominent grand-total gold figure
 local subtitleLabel   -- "<n> slots · <n> stacks · <n> items"
 local dividerTop      -- line under the header block
@@ -167,11 +203,15 @@ local dividerBottom   -- line above the footer
 local footerUpdatedRow  -- "Updated" -> "<ago>"
 local footerPricesRow   -- "Coverage" -> "<n>/<n> · <source>" (or a warning)
 local footerDeltaRow    -- "This visit"/"This session" -> "▲ <gold>" (hidden when none)
--- Value-history sparkline: a caption label + a container holding pooled bar
--- controls. The bars are created on demand and reused across renders (like the
+-- Value-history area chart: a caption label, a head line (current value + trend
+-- arrow) on the right of the caption, a container holding pooled bar controls
+-- that form the filled silhouette, and a scale line beneath carrying the series
+-- min and max. Bars are created on demand and reused across renders (like the
 -- category rows), so a refresh re-points them instead of churning controls.
-local sparkCaption      -- muted "Value history" caption above the bars
-local sparkContainer    -- holds the bar strip; anchors the per-sample bars
+local sparkCaption      -- muted "Value history" caption above the strip
+local sparkHeadLabel    -- current value + trend arrow, right-aligned on the caption row
+local sparkContainer    -- holds the filled strip; anchors the per-sample bars
+local sparkScaleLabel   -- "min … max" scale line beneath the strip
 local sparkBars = {}    -- pooled CT_BACKDROP bars, index 1..N
 local rowPool         -- reusable category rows { container, name, gold, data }
 
@@ -291,6 +331,14 @@ local function AcquireRow(index)
         ZO_Tooltip_AddDivider(InformationTooltip)
         InformationTooltip:AddLine(stringformat(GetString(SI_BMW_TOOLTIP_VALUE),
             ZO_LocalizeDecimalNumber(zo_round(data.gold))), "ZoFontGame", 1, 0.82, 0.25)
+        -- Net if sold through a guild trader (after the 1% + 7% fees). Only shown
+        -- when there's a value to net down; the muted green marks it as the
+        -- take-home figure, matching the grand-total hover.
+        if data.gold and data.gold > 0 then
+            InformationTooltip:AddLine(stringformat(GetString(SI_BMW_TOOLTIP_NET),
+                ZO_LocalizeDecimalNumber(zo_round(private.NetAfterFees(data.gold)))),
+                "ZoFontGame", 0.44, 0.80, 0.62)
+        end
         InformationTooltip:AddLine(stringformat(GetString(SI_BMW_TOOLTIP_SLOTS),
             data.slots), "ZoFontGame", 0.86, 0.85, 0.78)
         InformationTooltip:AddLine(stringformat(GetString(SI_BMW_TOOLTIP_STACKS),
@@ -357,10 +405,58 @@ function Window.Initialize()
     titleLabel:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, PADDING)
     titleLabel:SetText(Colorize(COLOR_ACCENT, GetString(SI_BMW_WINDOW_TITLE)))
 
+    -- Account/character identity on the right of the title line, in the gap beside
+    -- the short title. Right-aligned and ellipsized so a long handle never collides
+    -- with the title; vertically centered on the title's row. Filled and shown/
+    -- hidden by Window.Update per the showProfile setting.
+    profileLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_Profile", windowControl, CT_LABEL)
+    profileLabel:SetFont("ZoFontGameSmall")
+    profileLabel:SetHorizontalAlignment(TEXT_ALIGN_RIGHT)
+    profileLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+    profileLabel:SetMaxLineCount(1)
+    profileLabel:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+    profileLabel:SetAnchor(TOPRIGHT, windowControl, TOPRIGHT, -PADDING, PADDING)
+    -- Leave room for the title on the left so the two never overlap; the title is
+    -- short ("Craft Bag Worth"), so the right ~55% is free for the handle.
+    profileLabel:SetWidth(CurrentWidth() * 0.55)
+    profileLabel:SetHeight(TITLE_HEIGHT)
+
     totalLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_Total", windowControl, CT_LABEL)
     totalLabel:SetFont("ZoFontWinH1")
     totalLabel:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
     totalLabel:SetAnchor(TOPLEFT, titleLabel, BOTTOMLEFT, 0, SECTION_GAP)
+    -- Hover the grand total for the "net if sold" breakdown: the guild-store
+    -- listing fee (1%) and sales tax (7%) itemized, then the gold left after both.
+    -- The Craft Bag total is valued at market/list price, so this answers "what
+    -- would I actually pocket selling all of this through a guild trader".
+    totalLabel:SetMouseEnabled(true)
+    totalLabel:SetHandler("OnMouseEnter", function(self)
+        local gross = lastSnapshot and lastSnapshot.gold or 0
+        if gross <= 0 then
+            return
+        end
+        local listing = gross * FEE_LISTING_RATE
+        local sales = gross * FEE_SALES_RATE
+        local net = gross - listing - sales
+
+        InitializeTooltip(InformationTooltip, self, TOPLEFT, 0, 6, BOTTOMLEFT)
+        InformationTooltip:AddLine(GetString(SI_BMW_NET_TOOLTIP_TITLE), "ZoFontHeader2",
+            ZO_NORMAL_TEXT:UnpackRGB())
+        ZO_Tooltip_AddDivider(InformationTooltip)
+        -- Gross (list price), then each fee as a negative, then the net.
+        InformationTooltip:AddLine(stringformat(GetString(SI_BMW_NET_TOOLTIP_GROSS),
+            ZO_LocalizeDecimalNumber(zo_round(gross))), "ZoFontGame", 0.86, 0.85, 0.78)
+        InformationTooltip:AddLine(stringformat(GetString(SI_BMW_NET_TOOLTIP_LISTING),
+            ZO_LocalizeDecimalNumber(zo_round(listing))), "ZoFontGame", 0.82, 0.56, 0.37)
+        InformationTooltip:AddLine(stringformat(GetString(SI_BMW_NET_TOOLTIP_SALES),
+            ZO_LocalizeDecimalNumber(zo_round(sales))), "ZoFontGame", 0.82, 0.56, 0.37)
+        ZO_Tooltip_AddDivider(InformationTooltip)
+        InformationTooltip:AddLine(stringformat(GetString(SI_BMW_NET_TOOLTIP_NET),
+            ZO_LocalizeDecimalNumber(zo_round(net))), "ZoFontGame", 0.44, 0.80, 0.62)
+    end)
+    totalLabel:SetHandler("OnMouseExit", function()
+        ClearTooltip(InformationTooltip)
+    end)
 
     subtitleLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_Subtitle", windowControl, CT_LABEL)
     subtitleLabel:SetFont("ZoFontGameSmall")
@@ -374,17 +470,31 @@ function Window.Initialize()
     footerPricesRow = CreateFooterRow(addon.name .. "_FooterPrices")
     footerDeltaRow = CreateFooterRow(addon.name .. "_FooterDelta")
 
-    -- Value-history sparkline: a muted caption with the bar strip beneath it.
-    -- The bars themselves are created lazily by RenderSparkline so the strip is
-    -- sized to whatever data exists.
+    -- Value-history area chart: a muted caption with a filled strip beneath it,
+    -- a current-value + trend head on the caption row, and a min/max scale line
+    -- below. The bars themselves are created lazily by RenderSparkline so the
+    -- strip is sized to whatever data exists.
     sparkCaption = WINDOW_MANAGER:CreateControl(addon.name .. "_SparkCaption", windowControl, CT_LABEL)
     sparkCaption:SetFont("ZoFontGameSmall")
     sparkCaption:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
     sparkCaption:SetVerticalAlignment(TEXT_ALIGN_CENTER)
 
+    -- Current value + trend arrow, right-aligned to sit opposite the caption.
+    sparkHeadLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_SparkHead", windowControl, CT_LABEL)
+    sparkHeadLabel:SetFont("ZoFontGameSmall")
+    sparkHeadLabel:SetHorizontalAlignment(TEXT_ALIGN_RIGHT)
+    sparkHeadLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+
     sparkContainer = WINDOW_MANAGER:CreateControl(addon.name .. "_SparkStrip", windowControl, CT_CONTROL)
     sparkContainer:SetHeight(SPARK_HEIGHT)
     sparkContainer:SetMouseEnabled(true)
+
+    -- Min/max scale line beneath the strip: the series value range, centered so
+    -- it reads as a caption for the whole silhouette rather than hugging one edge.
+    sparkScaleLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_SparkScale", windowControl, CT_LABEL)
+    sparkScaleLabel:SetFont("ZoFontGameSmall")
+    sparkScaleLabel:SetHorizontalAlignment(TEXT_ALIGN_CENTER)
+    sparkScaleLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
 
     -- Hover: summarize the series (oldest -> newest value and the change) so the
     -- bars get exact figures on demand without crowding the strip with text.
@@ -485,8 +595,8 @@ local function RenderFooter()
     end
 end
 
--- Acquire (or create) the Nth sparkline bar, a CT_BACKDROP fill bottom-anchored
--- in the strip so its height grows upward. Pooled and reused across renders so a
+-- Acquire (or create) the Nth chart bar, a CT_BACKDROP fill bottom-anchored in
+-- the strip so its height grows upward. Pooled and reused across renders so a
 -- refresh re-points existing bars instead of creating new controls.
 local function AcquireSparkBar(index)
     local bar = sparkBars[index]
@@ -502,22 +612,28 @@ local function AcquireSparkBar(index)
     return bar
 end
 
--- Draw the value-history sparkline from the recorded samples. Each sample is one
+-- Draw the value-history area chart from the recorded samples. Each sample is one
 -- vertical bar whose height is its gold value normalized between the series
--- min/max; the newest bar is tinted brighter so "now" stands out. Bars are laid
--- out left (oldest) to right (newest) across the inner width. Returns the strip
--- height consumed (0 when hidden or there's nothing meaningful to show) so the
--- caller can advance its layout cursor. A flat series (min == max) draws all
--- bars at full height rather than dividing by zero.
+-- min/max; bars are drawn edge-to-edge (no gap) so they read as a filled
+-- silhouette rather than separate bars. The whole fill is tinted by the series'
+-- overall direction (green when the newest sample is at or above the oldest, red
+-- when below), with the newest bar brightened so "now" stands out. The head label
+-- (current value + trend arrow) and the min/max scale line are filled here too,
+-- so the chart carries scale and direction the old bar strip lacked. Returns the
+-- total height consumed (strip + scale line, 0 when hidden or there's nothing
+-- meaningful to show) so the caller can advance its layout cursor. A flat series
+-- (min == max) draws all bars at full height rather than dividing by zero.
 local function RenderSparkline(innerWidth)
     local valuation = addon.Valuation
     local points = (valuation and valuation.GetValueHistory) and valuation.GetValueHistory() or {}
 
     -- Need at least two points for a trend to mean anything; below that hide the
-    -- whole block (caption + strip) and report zero consumed height.
+    -- whole block (caption + head + strip + scale) and report zero consumed height.
     if #points < 2 then
         sparkCaption:SetHidden(true)
+        sparkHeadLabel:SetHidden(true)
         sparkContainer:SetHidden(true)
+        sparkScaleLabel:SetHidden(true)
         for i = 1, #sparkBars do
             sparkBars[i]:SetHidden(true)
         end
@@ -525,7 +641,9 @@ local function RenderSparkline(innerWidth)
     end
 
     sparkCaption:SetHidden(false)
+    sparkHeadLabel:SetHidden(false)
     sparkContainer:SetHidden(false)
+    sparkScaleLabel:SetHidden(false)
     sparkCaption:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_FOOTER_HISTORY_LABEL)))
 
     local count = #points
@@ -537,13 +655,18 @@ local function RenderSparkline(innerWidth)
     end
     local span = maxGold - minGold
 
-    -- Bar width: divide the strip evenly, leaving SPARK_BAR_GAP between bars.
-    -- Floor to whole pixels so bars align crisply; clamp to at least 1px.
+    -- Overall trend across the recorded window decides the fill tint: the newest
+    -- sample at or above the oldest reads as a gain (green), below as a loss (red).
+    local firstGold = points[1].gold or 0
+    local lastGold = points[count].gold or 0
+    local rising = lastGold >= firstGold
+    local fillColor = rising and SPARK_AREA_UP or SPARK_AREA_DOWN
+    local nowColor = rising and SPARK_AREA_UP_NOW or SPARK_AREA_DOWN_NOW
+
+    -- Bars fill the strip edge-to-edge so the series reads as one shape. Width is
+    -- the exact per-sample slot; left edges are placed at rounded slot boundaries
+    -- and each bar is widened to meet the next so rounding leaves no seams.
     local slot = innerWidth / count
-    local barWidth = zo_round(slot - SPARK_BAR_GAP)
-    if barWidth < 1 then
-        barWidth = 1
-    end
 
     for i = 1, count do
         local bar = AcquireSparkBar(i)
@@ -552,13 +675,22 @@ local function RenderSparkline(innerWidth)
         local frac = span > 0 and (gold - minGold) / span or 1
         local height = SPARK_MIN_BAR_H + frac * (SPARK_HEIGHT - SPARK_MIN_BAR_H)
 
-        local color = (i == count) and SPARK_BAR_COLOR_NOW or SPARK_BAR_COLOR
+        local color = (i == count) and nowColor or fillColor
         bar:SetCenterColor(color[1], color[2], color[3], color[4])
+
+        -- Edge-to-edge: this bar spans from its slot boundary to the next, so the
+        -- rounded left edges abut with no gap.
+        local left = zo_round((i - 1) * slot)
+        local right = zo_round(i * slot)
+        local barWidth = right - left
+        if barWidth < 1 then
+            barWidth = 1
+        end
         bar:SetWidth(barWidth)
         bar:SetHeight(zo_round(height))
         bar:ClearAnchors()
         -- Bottom-aligned so taller bars rise from a shared baseline.
-        bar:SetAnchor(BOTTOMLEFT, sparkContainer, BOTTOMLEFT, zo_round((i - 1) * slot), 0)
+        bar:SetAnchor(BOTTOMLEFT, sparkContainer, BOTTOMLEFT, left, 0)
         bar:SetHidden(false)
     end
 
@@ -567,7 +699,23 @@ local function RenderSparkline(innerWidth)
         sparkBars[i]:SetHidden(true)
     end
 
-    return SPARK_HEIGHT
+    -- Head: current value + trend arrow + gold icon, colored by direction. The
+    -- arrow and gold icon are textures (left outside Colorize, since textures
+    -- aren't tinted); only the number is colored. Matches FormatGold's idiom.
+    local headColor = rising and COLOR_GAIN or COLOR_LOSS
+    local headArrow = rising and ARROW_UP or ARROW_DOWN
+    sparkHeadLabel:SetText(headArrow .. " " ..
+        Colorize(headColor, ZO_LocalizeDecimalNumber(zo_round(lastGold))) .. " " .. GOLD_ICON)
+
+    -- Scale line: the series value range as "min - max" (plain hyphen), centered
+    -- under the strip. Stated as a range rather than edge-pinned labels because
+    -- the leftmost/rightmost bars are the oldest/newest samples, not necessarily
+    -- the min/max.
+    sparkScaleLabel:SetText(Colorize(COLOR_MUTED, stringformat(GetString(SI_BMW_HISTORY_SCALE),
+        ZO_LocalizeDecimalNumber(zo_round(minGold)),
+        ZO_LocalizeDecimalNumber(zo_round(maxGold)))))
+
+    return SPARK_HEIGHT + SPARK_SCALE_GAP + FOOTER_LINE
 end
 
 -- Re-render the window from the current valuation. Pure presentation: it reads
@@ -590,6 +738,16 @@ function Window.Update()
 
     -- Header block: prominent total + subtitle counts.
     totalLabel:SetText(FormatGold(snapshot.gold))
+
+    -- Account/character identity on the title line (optional). The Craft Bag is
+    -- account-wide, so the @account handle names whose bag this is; the character
+    -- is profile flavor. Text is cached (stable per session), so this is cheap.
+    if sv.showProfile ~= false then
+        profileLabel:SetHidden(false)
+        profileLabel:SetText(Colorize(COLOR_MUTED, GetProfileText()))
+    else
+        profileLabel:SetHidden(true)
+    end
 
     if snapshot.slots > 0 then
         subtitleLabel:SetHidden(false)
@@ -689,18 +847,30 @@ function Window.Update()
 
     RenderFooter()
 
-    -- Value-history sparkline (optional). Sits below the footer rows; the
-    -- caption + bar strip only consume space when there's enough history to
-    -- draw, and the whole block is skipped when the setting is off.
+    -- Value-history area chart (optional). Sits below the footer rows; the
+    -- caption + head + filled strip + scale line only consume space when there's
+    -- enough history to draw, and the whole block is skipped when the setting is
+    -- off.
     if sv.showValueHistory ~= false then
         y = y + SECTION_GAP
+        local innerWidth = CurrentWidth() - PADDING * 2
+
+        -- Caption (left) and current-value head (right) share one row.
         sparkCaption:ClearAnchors()
         sparkCaption:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, y)
+        sparkHeadLabel:ClearAnchors()
+        sparkHeadLabel:SetAnchor(TOPRIGHT, windowControl, TOPRIGHT, -PADDING, y)
 
-        local innerWidth = CurrentWidth() - PADDING * 2
+        -- Filled strip beneath the caption row.
         sparkContainer:ClearAnchors()
         sparkContainer:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, y + FOOTER_LINE)
         sparkContainer:SetWidth(innerWidth)
+
+        -- Scale line (min … max) beneath the strip.
+        sparkScaleLabel:ClearAnchors()
+        sparkScaleLabel:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING,
+            y + FOOTER_LINE + SPARK_HEIGHT + SPARK_SCALE_GAP)
+        sparkScaleLabel:SetWidth(innerWidth)
 
         local consumed = RenderSparkline(innerWidth)
         if consumed > 0 then
@@ -708,7 +878,9 @@ function Window.Update()
         end
     else
         sparkCaption:SetHidden(true)
+        sparkHeadLabel:SetHidden(true)
         sparkContainer:SetHidden(true)
+        sparkScaleLabel:SetHidden(true)
     end
 
     windowControl:SetHeight(y + PADDING)
@@ -788,6 +960,11 @@ function Window.ApplyWidth()
     local innerWidth = width - PADDING * 2
     if dividerTop then
         dividerTop:SetWidth(innerWidth)
+    end
+    -- The profile label's width tracks the window so a wider panel gives the handle
+    -- more room before it ellipsizes.
+    if profileLabel then
+        profileLabel:SetWidth(width * 0.55)
     end
     if dividerBottom then
         dividerBottom:SetWidth(innerWidth)

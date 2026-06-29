@@ -5,7 +5,7 @@ local SAVED_VARIABLES_NAME = "BureauOfMaterialWorth_SavedVariables"
 BureauOfMaterialWorth = {
     name = ADDON_NAME,
     savedVariablesName = SAVED_VARIABLES_NAME,
-    version = "1.6.30060059",
+    version = "1.6.30060231",
     debugMode = 1,  -- 0=off, 1=errors, 2=warnings, 3=info, 4=verbose
 }
 
@@ -133,6 +133,27 @@ private.ChatInfo = ChatInfo
 private.ChatError = ChatError
 private.GetLocalizedBoolean = GetLocalizedBoolean
 private.GetDebugLevelName = GetDebugLevelName
+
+-- Guild-store selling fees: the single source of truth for the "net if sold"
+-- figures shown across the addon (the grand-total hover, the detail window's
+-- category/row tooltips and footer summary). Two parts, confirmed against the
+-- live game economy:
+--   * listing fee : 1% of the listed price, charged up front when posting and
+--                   NOT refunded even if the item never sells.
+--   * sales tax   : 7%, taken by the trading house only on a sale.
+-- A sold item therefore nets 92% of its listed price (the addon values stacks at
+-- the market/list price LibPrice reports, so that is what the cut applies to).
+-- Kept here, not per-module, so a future ZOS change is a one-line edit.
+private.FEE_LISTING_RATE = 0.01
+private.FEE_SALES_RATE = 0.07
+
+-- Gold left after both guild-store fees, given a gross (list-price) amount.
+-- Subtracts each fee separately (rather than gross * 0.92) so a caller that also
+-- itemizes the two fees gets figures that sum exactly to this net.
+function private.NetAfterFees(gross)
+    gross = gross or 0
+    return gross - gross * private.FEE_LISTING_RATE - gross * private.FEE_SALES_RATE
+end
 private.LogError = LogError
 private.LogWarn = LogWarn
 private.LogInfo = LogInfo

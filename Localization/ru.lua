@@ -22,6 +22,7 @@ local strings = {
     [SI_BMW_STATUS_SORT_BY_PROFESSION] = "по профессии",
     [SI_BMW_STATUS_LABEL_COLOR_SCALE] = "Окраска золота:",
     [SI_BMW_STATUS_LABEL_VALUE_HISTORY] = "История стоимости:",
+    [SI_BMW_STATUS_LABEL_PROFILE] = "Метка аккаунта:",
     [SI_BMW_STATUS_LABEL_NOTIFY] = "Сообщения в чат:",
     [SI_BMW_STATUS_LABEL_GUILD_STORE] = "В гильдейском магазине:",
     [SI_BMW_STATUS_LABEL_DELTA] = "База изменения:",
@@ -53,6 +54,8 @@ local strings = {
     [SI_BMW_SETTING_BORDER_TOOLTIP] = "Рисовать рамку панели. Выключите для более чистого вида без рамки.",
     [SI_BMW_SETTING_VALUE_HISTORY_NAME] = "Показывать историю стоимости",
     [SI_BMW_SETTING_VALUE_HISTORY_TOOLTIP] = "Рисовать внизу панели небольшой график стоимости ремесленной сумки во времени. Одна точка записывается при каждом открытии сумки (не чаще раза в несколько часов), хранятся последние 90 точек. Наведите курсор на график, чтобы увидеть самое старое, самое новое значения и итоговое изменение.",
+    [SI_BMW_SETTING_PROFILE_NAME] = "Показывать метку аккаунта",
+    [SI_BMW_SETTING_PROFILE_TOOLTIP] = "Показывать ваш @account и имя текущего персонажа в строке заголовка панели. Ремесленная сумка общая для всего аккаунта, поэтому @account указывает, чья это сумка. Выключите для более чистого заголовка.",
     [SI_BMW_SETTING_NOTIFY_VISIT_NAME] = "Сообщать стоимость в чат",
     [SI_BMW_SETTING_NOTIFY_VISIT_TOOLTIP] = "Выводить стоимость ремесленной сумки в чат при первом открытии за сессию, вместе с изменением с прошлого визита (когда запас менялся). Выключите, чтобы не выводить ничего в чат.",
     [SI_BMW_SETTING_GUILD_STORE_NAME] = "Показывать в гильдейском магазине",
@@ -77,6 +80,8 @@ local strings = {
 
     -- Window: per-category hover tooltip
     [SI_BMW_TOOLTIP_VALUE] = "Стоимость: %s золота",
+    -- Чистыми после комиссий гильдейского магазина (1% + 7%). %s = сумма золота.
+    [SI_BMW_TOOLTIP_NET] = "Чистыми при продаже: %s золота",
     [SI_BMW_TOOLTIP_SLOTS] = "Ячеек (уникальных материалов): %d",
     [SI_BMW_TOOLTIP_STACKS] = "Стаков по 200: %s",
     [SI_BMW_TOOLTIP_ITEMS] = "Предметов: %s",
@@ -106,6 +111,7 @@ local strings = {
     [SI_BMW_ROW_TOOLTIP_QTY] = "Количество: %s",
     [SI_BMW_ROW_TOOLTIP_UNIT] = "Цена за штуку: %s",
     [SI_BMW_ROW_TOOLTIP_TOTAL] = "Стоимость стопки: %s",
+    [SI_BMW_ROW_TOOLTIP_NET] = "Чистыми при продаже: %s",
     [SI_BMW_ROW_TOOLTIP_SOURCE] = "Источник цены: %s",
     [SI_BMW_ROW_TOOLTIP_CHANGE] = "Изменение цены: %s",
     [SI_BMW_ROW_TOOLTIP_UNPRICED] = "Цена недоступна",
@@ -115,6 +121,9 @@ local strings = {
     -- изменений: чистое движение золота плюс сколько материалов прибавилось / убыло.
     [SI_BMW_DETAIL_FOOTER_COUNT] = "Материалов: %d",
     [SI_BMW_DETAIL_FOOTER_SHARE] = "%d%% от сумки",
+    -- Чистыми по показанным строкам после комиссий (футер категории/поиска). %s =
+    -- сумма золота; иконка золота добавляется в коде.
+    [SI_BMW_DETAIL_FOOTER_NET_SOLD] = "чистыми %s",
     [SI_BMW_DETAIL_FOOTER_NET] = "Итог:",
     [SI_BMW_DETAIL_FOOTER_GAINED] = "%d вверх",
     [SI_BMW_DETAIL_FOOTER_LOST] = "%d вниз",
@@ -184,6 +193,16 @@ local strings = {
     [SI_BMW_FOOTER_DELTA_LABEL] = "За визит",
     [SI_BMW_FOOTER_DELTA_LABEL_SESSION] = "За сессию",
     [SI_BMW_FOOTER_DELTA_VALUE] = "%s золота",
+
+    -- Тултип общего тотала: расклад «чистыми при продаже» по комиссиям
+    -- гильдейского магазина. %% даёт литеральный процент через string.format,
+    -- %s = сумма золота. _LISTING/_SALES показаны как вычеты; _NET - остаток.
+    [SI_BMW_NET_TOOLTIP_TITLE] = "При продаже у гильдейского торговца",
+    [SI_BMW_NET_TOOLTIP_GROSS] = "Цена лота: %s золота",
+    [SI_BMW_NET_TOOLTIP_LISTING] = "Сбор за размещение (1%%): -%s золота",
+    [SI_BMW_NET_TOOLTIP_SALES] = "Налог с продажи (7%%): -%s золота",
+    [SI_BMW_NET_TOOLTIP_NET] = "Вы получите (92%%): %s золота",
+
     [SI_BMW_FOOTER_HISTORY_LABEL] = "История стоимости",
     [SI_BMW_HISTORY_TOOLTIP_POINTS] = "Записано точек: %d",
     [SI_BMW_HISTORY_TOOLTIP_OLDEST] = "Самая старая: %s золота",
