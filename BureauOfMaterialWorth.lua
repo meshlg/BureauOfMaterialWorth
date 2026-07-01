@@ -5,7 +5,7 @@ local SAVED_VARIABLES_NAME = "BureauOfMaterialWorth_SavedVariables"
 BureauOfMaterialWorth = {
     name = ADDON_NAME,
     savedVariablesName = SAVED_VARIABLES_NAME,
-    version = "1.6.30060231",
+    version = "1.7.01071510",
     debugMode = 1,  -- 0=off, 1=errors, 2=warnings, 3=info, 4=verbose
 }
 
@@ -31,6 +31,8 @@ local stringlower   = string.lower
 local tableinsert   = table.insert
 local mathmax       = math.max
 local mathmin       = math.min
+local zo_round      = zo_round
+local ZO_LocalizeDecimalNumber = ZO_LocalizeDecimalNumber
 
 -- Localization/chat helpers
 local CHAT_PREFIX = "|c6FCB9F[Bureau Of Material Worth]|r: "
@@ -153,6 +155,31 @@ private.FEE_SALES_RATE = 0.07
 function private.NetAfterFees(gross)
     gross = gross or 0
     return gross - gross * private.FEE_LISTING_RATE - gross * private.FEE_SALES_RATE
+end
+
+-- House palette + gold-formatting, shared by every presentation module (Window,
+-- DetailWindow, WithdrawDialog, Settings) so a color/format change is a one-line
+-- edit here instead of four. Kept in `private` rather than each module's locals.
+private.COLOR_ACCENT = "6FCB9F"  -- brand green: titles / grand total
+private.COLOR_MUTED  = "8C8A82"  -- dim grey: subtitle / footer / secondary
+private.COLOR_NAME   = "DBD9D0"  -- near-white: category / material names
+private.COLOR_GOLD   = "F4D03F"  -- soft gold: gold figures
+private.COLOR_WARN   = "D0905E"  -- amber: "missing price" hint
+private.COLOR_GAIN    = "8FCB9F"  -- green: positive delta / price change
+private.COLOR_LOSS    = "D08A8A"  -- soft red: negative delta / price change
+
+private.GOLD_ICON = "|t16:16:EsoUI/Art/currency/currency_gold.dds|t"
+
+-- Wrap `text` in the given hex color code.
+function private.Colorize(hex, text)
+    return stringformat("|c%s%s|r", hex, text)
+end
+
+-- Format a gold amount with thousands separators and the gold icon, optionally
+-- in a color other than the default COLOR_GOLD (e.g. a delta's gain/loss tint).
+function private.FormatGold(amount, colorOverride)
+    return private.Colorize(colorOverride or private.COLOR_GOLD,
+        ZO_LocalizeDecimalNumber(zo_round(amount or 0))) .. " " .. private.GOLD_ICON
 end
 private.LogError = LogError
 private.LogWarn = LogWarn

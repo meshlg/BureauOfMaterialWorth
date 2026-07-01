@@ -152,13 +152,11 @@ function Settings.RegisterSettingsPanel()
     -- valuation only runs while the Craft Bag is open, so a value readout here
     -- would be stale or zero. On = the shipped green, off = the muted label grey;
     -- mode rows (order/baseline are not on/off) use the neutral label tone.
-    local STATUS_COLOR_ON   = "6FCB9F"
-    local STATUS_COLOR_OFF  = "8C8A82"
+    local STATUS_COLOR_ON   = private.COLOR_ACCENT
+    local STATUS_COLOR_OFF  = private.COLOR_MUTED
     local STATUS_COLOR_MODE = "C5C29E"
 
-    local function Colorize(colorHex, text)
-        return string.format("|c%s%s|r", colorHex, text)
-    end
+    local Colorize = private.Colorize
 
     -- A plain colored on/off word for the dashboard rows.
     local function StatusOnOff(enabled)

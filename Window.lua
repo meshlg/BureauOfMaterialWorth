@@ -9,15 +9,15 @@ local stringformat = string.format
 local zo_round = zo_round
 local mathabs = math.abs
 
--- Palette (shared with the rest of the Bureau house style)
+-- Palette (shared house style; see private.COLOR_* in BureauOfMaterialWorth.lua)
 -- ---------------------------------------------------------------------------
-local COLOR_ACCENT   = "6FCB9F"  -- brand green: title + grand total
-local COLOR_MUTED    = "8C8A82"  -- dim grey: subtitle + footer
-local COLOR_NAME     = "DBD9D0"  -- near-white: category names
-local COLOR_GOLD     = "F4D03F"  -- soft gold: gold figures
-local COLOR_WARN     = "D0905E"  -- amber: "missing price" hint
-local COLOR_GAIN     = "8FCB9F"  -- green: positive since-last-visit delta
-local COLOR_LOSS     = "D08A8A"  -- soft red: negative since-last-visit delta
+local COLOR_ACCENT   = private.COLOR_ACCENT
+local COLOR_MUTED    = private.COLOR_MUTED
+local COLOR_NAME     = private.COLOR_NAME
+local COLOR_GOLD     = private.COLOR_GOLD
+local COLOR_WARN     = private.COLOR_WARN
+local COLOR_GAIN     = private.COLOR_GAIN
+local COLOR_LOSS     = private.COLOR_LOSS
 
 -- Layout constants
 -- ---------------------------------------------------------------------------
@@ -72,11 +72,12 @@ Window.MIN_WIDTH = MIN_WINDOW_WIDTH
 Window.MAX_WIDTH = MAX_WINDOW_WIDTH
 Window.WIDTH_STEP = WINDOW_WIDTH_STEP
 
-local GOLD_ICON = "|t16:16:EsoUI/Art/currency/currency_gold.dds|t"
+local GOLD_ICON = private.GOLD_ICON
 
 -- Guild-store selling fees live in the core (private.FEE_*), the single source of
 -- truth shared with the detail window. Bound to locals here for the grand-total
--- "net if sold" hover; see private.NetAfterFees for the rationale and rates.
+-- "net if sold" hover's itemized listing/sales lines; see private.NetAfterFees
+-- for the combined net figure.
 local FEE_LISTING_RATE = private.FEE_LISTING_RATE
 local FEE_SALES_RATE   = private.FEE_SALES_RATE
 
@@ -112,9 +113,7 @@ local function CategoryIcon(categoryId)
     return "|t18:18:" .. path .. "|t "
 end
 
-local function Colorize(hex, text)
-    return stringformat("|c%s%s|r", hex, text)
-end
+local Colorize = private.Colorize
 
 -- Magnitude tint for gold figures. Deliberately SUBTLE: every tier stays within
 -- the gold family and only shifts brightness/warmth a touch, so larger amounts
@@ -141,10 +140,7 @@ end
 -- Format a gold amount with thousands separators + the gold icon, matching the
 -- presentation used in LibPrice's own example output. An optional hex color
 -- overrides the default gold tone (used by the magnitude color scale).
-local function FormatGold(amount, colorOverride)
-    return Colorize(colorOverride or COLOR_GOLD,
-        ZO_LocalizeDecimalNumber(zo_round(amount or 0))) .. " " .. GOLD_ICON
-end
+local FormatGold = private.FormatGold
 
 -- "How long ago" for the footer, from a game-time-ms stamp to a short localized
 -- phrase. Coarse buckets (now / seconds / minutes / hours) -- this is a feel,
@@ -437,7 +433,7 @@ function Window.Initialize()
         end
         local listing = gross * FEE_LISTING_RATE
         local sales = gross * FEE_SALES_RATE
-        local net = gross - listing - sales
+        local net = private.NetAfterFees(gross)
 
         InitializeTooltip(InformationTooltip, self, TOPLEFT, 0, 6, BOTTOMLEFT)
         InformationTooltip:AddLine(GetString(SI_BMW_NET_TOOLTIP_TITLE), "ZoFontHeader2",

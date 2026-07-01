@@ -12,14 +12,11 @@ local mathabs = math.abs
 local tablesort = table.sort
 local GetTimeStamp = GetTimeStamp
 
--- Palette (shared house style with Window.lua). Kept as a local copy rather than
--- reaching into Window.lua's locals so the two presentation modules stay
--- decoupled; these values are stable brand colors.
-local COLOR_ACCENT = "6FCB9F"  -- brand green: title
-local COLOR_MUTED  = "8C8A82"  -- dim grey: headers / secondary
-local COLOR_GOLD   = "F4D03F"  -- soft gold: gold figures
-local COLOR_GAIN   = "8FCB9F"  -- green: positive price change
-local COLOR_LOSS   = "D08A8A"  -- soft red: negative price change
+-- Palette (shared house style; see private.COLOR_* in BureauOfMaterialWorth.lua)
+local COLOR_ACCENT = private.COLOR_ACCENT
+local COLOR_MUTED  = private.COLOR_MUTED
+local COLOR_GAIN   = private.COLOR_GAIN
+local COLOR_LOSS   = private.COLOR_LOSS
 
 -- COLOR_MUTED (8C8A82) as normalized RGB, for the column headers. They are sort
 -- toggles whose tone is set via SetColor rather than an inline |c code, so the
@@ -68,7 +65,7 @@ local function CumulativeColor(percent)
     return RGBToHex(r, g, b)
 end
 
-local GOLD_ICON = "|t16:16:EsoUI/Art/currency/currency_gold.dds|t"
+local GOLD_ICON = private.GOLD_ICON
 -- Same sort-arrow textures Window.lua uses for its delta, for the same reason:
 -- the ESO UI font doesn't render the Unicode triangles reliably.
 local ARROW_UP = "|t16:16:EsoUI/Art/Miscellaneous/list_sortUp.dds|t"
@@ -89,18 +86,22 @@ local BG_ALPHA     = 0.92
 -- Single row data type id for the scroll list (we only have one kind of row).
 local ROW_TYPE_ID = 1
 
+-- Search debounce. GetMaterialsMatching walks every occupied slot and filters by
+-- name, so running it on every keystroke micro-stutters on a large craft bag.
+-- Instead a keystroke arms this timer and only the last one within the window
+-- actually rebuilds the list -- the coalescing pattern the Valuation getter's
+-- comment already assumes ("debounced by the caller"). Short enough to feel
+-- instant, long enough to collapse a fast typist's burst into one rebuild.
+local SEARCH_DEBOUNCE_MS = 150
+local SEARCH_TIMER_NAME = addon.name .. "_DetailSearchDebounce"
+
 -- Identifier for the "clear snapshot?" confirmation dialog, registered once in
 -- Initialize. Clearing is destructive (one snapshot, no undo), so a stray click
 -- on the toolbar button must not wipe the baseline without a confirm.
 local CLEAR_SNAPSHOT_DIALOG = "BUREAU_OF_MATERIAL_WORTH_CLEAR_SNAPSHOT"
 
-local function Colorize(hex, text)
-    return stringformat("|c%s%s|r", hex, text)
-end
-
-local function FormatGold(amount)
-    return Colorize(COLOR_GOLD, ZO_LocalizeDecimalNumber(zo_round(amount or 0))) .. " " .. GOLD_ICON
-end
+local Colorize = private.Colorize
+local FormatGold = private.FormatGold
 
 -- "How long ago" for the diff title, from a unix timestamp (GetTimeStamp) to a
 -- short localized phrase. Note this works off the unix clock, NOT
@@ -186,6 +187,21 @@ local sortAsc = false
 -- capture these as upvalues; they are defined (as plain assignments) further
 -- down, after Initialize.
 local FillList, Populate, UpdateTitle, UpdateHeaders
+
+-- Coalesce a burst of search keystrokes into a single rebuild. Each keystroke
+-- re-arms the one-shot timer; only the last one within SEARCH_DEBOUNCE_MS fires,
+-- and it calls Populate against the current searchQuery. Mirrors the coalescing
+-- Valuation uses for its window refresh, and satisfies the "debounced by the
+-- caller" contract on GetMaterialsMatching. Populate is an upvalue resolved by
+-- the time this ever runs (Initialize, which wires the handler, runs after the
+-- assignments below).
+local function QueueSearch()
+    EVENT_MANAGER:UnregisterForUpdate(SEARCH_TIMER_NAME)
+    EVENT_MANAGER:RegisterForUpdate(SEARCH_TIMER_NAME, SEARCH_DEBOUNCE_MS, function()
+        EVENT_MANAGER:UnregisterForUpdate(SEARCH_TIMER_NAME)
+        Populate()
+    end)
+end
 
 -- Build the colored price-change text for a material row: an up/down arrow (the
 -- texture carries the direction) plus a colored magnitude, matching Window.lua's
@@ -539,7 +555,9 @@ function DetailWindow.Initialize()
         -- open (which would otherwise re-trigger this and clobber the view).
         if not suppressSearchEvent then
             searchQuery = searchBox:GetText() or ""
-            Populate()
+            -- Debounce the (whole-bag) rebuild so a fast typist's burst collapses
+            -- into one Populate instead of one per keystroke; see QueueSearch.
+            QueueSearch()
         end
         searchHint:SetHidden((searchBox:GetText() or "") ~= "")
     end)

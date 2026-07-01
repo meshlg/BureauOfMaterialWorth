@@ -89,43 +89,36 @@ local LogDebug = private.LogDebug
 local LogInfo = private.LogInfo
 local ChatInfo = private.ChatInfo
 
--- Human-readable names for LibPrice source keys (the second return of
--- ItemLinkToPriceGold). LibPrice has no built-in display-name map, so we keep
--- our own; an unknown key falls back to its raw string rather than erroring.
-local SOURCE_DISPLAY_NAMES = {
-    mm    = "Master Merchant",
-    att   = "Arkadius' Trade Tools",
-    ttc   = "Tamriel Trade Centre",
-    furc  = "Furniture Catalogue",
-    crown = "Crown Store",
-    rolis = "Rolis Hlaalu",
-    npc   = "NPC Vendor",
-}
-
--- Compact source labels for the tight footer value column, where the full names
--- above would not fit. Falls back to the raw key (upper-cased) for unknowns.
-local SOURCE_SHORT_NAMES = {
-    mm    = "MM",
-    att   = "ATT",
-    ttc   = "TTC",
-    furc  = "FurC",
-    crown = "Crown",
-    rolis = "Rolis",
-    npc   = "NPC",
+-- LibPrice source keys (the second return of ItemLinkToPriceGold) mapped to
+-- their labels. One row per source so the full name and the compact footer label
+-- can never drift apart: `display` is the human-readable name (LibPrice ships no
+-- such map, so we keep our own), `short` the tight label for the footer value
+-- column where the full name would not fit. An unknown key falls back to the raw
+-- string (display) or its upper-cased form (short) rather than erroring.
+local SOURCE_INFO = {
+    mm    = { display = "Master Merchant",       short = "MM" },
+    att   = { display = "Arkadius' Trade Tools",  short = "ATT" },
+    ttc   = { display = "Tamriel Trade Centre",   short = "TTC" },
+    furc  = { display = "Furniture Catalogue",    short = "FurC" },
+    crown = { display = "Crown Store",            short = "Crown" },
+    rolis = { display = "Rolis Hlaalu",           short = "Rolis" },
+    npc   = { display = "NPC Vendor",             short = "NPC" },
 }
 
 local function SourceDisplayName(sourceKey)
     if not sourceKey then
         return nil
     end
-    return SOURCE_DISPLAY_NAMES[sourceKey] or sourceKey
+    local info = SOURCE_INFO[sourceKey]
+    return (info and info.display) or sourceKey
 end
 
 local function SourceShortName(sourceKey)
     if not sourceKey then
         return nil
     end
-    return SOURCE_SHORT_NAMES[sourceKey] or string.upper(sourceKey)
+    local info = SOURCE_INFO[sourceKey]
+    return (info and info.short) or string.upper(sourceKey)
 end
 
 -- Public: resolve a LibPrice source key ("mm"/"ttc"/...) to its full display name
@@ -252,6 +245,13 @@ end
 local slotInfo = {}         -- [slotIndex] = { value, category, stack, priced, source }
 local priceCache = {}       -- [itemId] = per-unit gold (false = known-unpriced)
 local priceSource = {}      -- [itemId] = LibPrice source key ("mm"/"ttc"/...) when priced
+-- Display name per itemId, resolved lazily and memoized. A material's name is
+-- stable for its itemId, but GetItemLinkName + zo_strformat is not free, and the
+-- detail window resolves it repeatedly (every Populate: a sort, a search
+-- keystroke, a live refresh after a withdrawal). Caching it here turns those
+-- rebuilds into arithmetic. Keyed by itemId, so one entry serves every slot and
+-- both the row builders and the search filter.
+local nameCache = {}        -- [itemId] = resolved display name
 local categoryStats = {}    -- [categoryId] = { gold, slots, items, unpricedSlots }
 local sourceCounts = {}     -- [sourceKey] = number of priced slots sourced from it
 
@@ -324,6 +324,24 @@ local REFRESH_DELAY_MS = 100
 local refreshQueued = false
 local REFRESH_TIMER_NAME = addon.name .. "_QueuedRefresh"
 
+-- Unpriced-slot self-heal
+-- ---------------------------------------------------------------------------
+-- A price source (Master Merchant / TTC / ATT) often finishes importing its data
+-- a minute or two AFTER login, so the first scan of a freshly-opened bag can mark
+-- materials unpriced that will have a price shortly. The cache stores that verdict
+-- as false and never re-queries it within a session (by design -- see
+-- GetUnitPrice), so without this the panel would keep showing "unpriced" until the
+-- user manually hit /bmw refresh. Instead, while the bag is open and something is
+-- unpriced, a slow timer re-queries just the unpriced slots and folds any
+-- newly-available prices into the aggregates. It is bounded: it stops as soon as
+-- everything is priced, gives up after PRICE_RETRY_MAX_ATTEMPTS (the sources have
+-- long since imported by then), and only runs while the bag is visible.
+local PRICE_RETRY_INTERVAL_MS  = 15000  -- re-query unpriced slots every ~15s
+local PRICE_RETRY_MAX_ATTEMPTS = 8      -- ~2 min total, then give up until refresh
+local PRICE_RETRY_TIMER_NAME   = addon.name .. "_PriceRetry"
+local priceRetryQueued = false
+local priceRetryAttempts = 0
+
 local function GetOrCreateCategoryStat(categoryId)
     local stat = categoryStats[categoryId]
     if not stat then
@@ -354,6 +372,24 @@ local function GetUnitPrice(itemId, itemLink)
     priceCache[itemId] = false
     priceSource[itemId] = nil
     return 0, false, nil
+end
+
+-- Resolved display name for an itemId, memoized. The name is stable per itemId,
+-- so this is resolved once (GetItemLinkName + the game's title-casing via
+-- zo_strformat) and reused across the detail window's many rebuilds -- a sort, a
+-- search keystroke, or a live refresh no longer re-resolve every row. The link is
+-- the language-independent source of truth, so a stale name never survives a
+-- game-language change within a session (the cache lives only for the session).
+local function GetDisplayName(itemId, itemLink)
+    local cached = nameCache[itemId]
+    if cached ~= nil then
+        return cached
+    end
+    -- GetItemLinkName returns the raw, often lower-case name; zo_strformat title-
+    -- cases and cleans it the way the game shows it (see BuildMaterialRow).
+    local name = zo_strformat(SI_TOOLTIP_ITEM_NAME, GetItemLinkName(itemLink))
+    nameCache[itemId] = name
+    return name
 end
 
 -- Compute a single slot's contribution WITHOUT touching the running aggregates.
@@ -512,6 +548,83 @@ local function QueueWindowRefresh()
     end)
 end
 
+-- Re-price the currently-unpriced slots and fold any now-available prices into
+-- the aggregates. Walks slotInfo (cheap: it is the occupied slots, not the whole
+-- bag), and for each slot still flagged unpriced drops its cached "false" verdict
+-- so GetUnitPrice re-queries LibPrice, then re-applies the slot incrementally
+-- (remove old contribution, recompute, add back) exactly like a single-slot
+-- update. Returns how many slots became priced this pass, so the caller can tell
+-- whether the retry made progress. Touches nothing when nothing is unpriced.
+local function RepriceUnpricedSlots()
+    if grandUnpricedSlots <= 0 then
+        return 0
+    end
+
+    -- Collect first, then mutate: RemoveSlotFromAggregates rewrites slotInfo, so
+    -- iterating it while editing would be unsafe.
+    local stale = {}
+    for slotIndex, info in pairs(slotInfo) do
+        if not info.priced then
+            stale[#stale + 1] = { slotIndex = slotIndex, itemId = info.itemId }
+        end
+    end
+
+    local healed = 0
+    for i = 1, #stale do
+        -- Drop the memoized "unpriced" verdict so ComputeSlot re-queries LibPrice.
+        priceCache[stale[i].itemId] = nil
+        RemoveSlotFromAggregates(stale[i].slotIndex)
+        local info = ComputeSlot(stale[i].slotIndex)
+        AddSlotToAggregates(stale[i].slotIndex, info)
+        if info and info.priced then
+            healed = healed + 1
+        end
+    end
+
+    if healed > 0 then
+        lastScanTimeMs = GetGameTimeMilliseconds()
+    end
+    return healed
+end
+
+-- Stop the unpriced-slot retry timer and reset its state, so a later open starts
+-- a fresh attempt budget. Safe to call when no timer is running.
+local function StopPriceRetry()
+    EVENT_MANAGER:UnregisterForUpdate(PRICE_RETRY_TIMER_NAME)
+    priceRetryQueued = false
+    priceRetryAttempts = 0
+end
+
+-- Arm the slow retry that heals prices which imported after the first scan (see
+-- the PRICE_RETRY_* note above). No-op when everything is already priced, when a
+-- retry is already armed, or when the bag is not visible (we do no work with the
+-- bag closed). Each tick re-queries the unpriced slots; it refreshes the window
+-- when a price heals, and stops once everything is priced or the attempt budget
+-- is spent.
+local function StartPriceRetry()
+    if priceRetryQueued or grandUnpricedSlots <= 0 or not isBagVisible then
+        return
+    end
+    priceRetryQueued = true
+    priceRetryAttempts = 0
+
+    EVENT_MANAGER:RegisterForUpdate(PRICE_RETRY_TIMER_NAME, PRICE_RETRY_INTERVAL_MS, function()
+        priceRetryAttempts = priceRetryAttempts + 1
+
+        local healed = RepriceUnpricedSlots()
+        if healed > 0 then
+            RefreshWindow()
+        end
+
+        -- Stop once there is nothing left to heal or the budget is spent; the
+        -- price sources have long since finished importing by then, and a manual
+        -- /bmw refresh remains available for anything still missing.
+        if grandUnpricedSlots <= 0 or priceRetryAttempts >= PRICE_RETRY_MAX_ATTEMPTS then
+            StopPriceRetry()
+        end
+    end)
+end
+
 -- EVENT_INVENTORY_SINGLE_SLOT_UPDATE handler (filtered to BAG_VIRTUAL).
 -- ---------------------------------------------------------------------------
 -- While the bag is closed we do NO work beyond marking the valuation dirty, so
@@ -654,20 +767,31 @@ function Valuation.OnCraftBagShown()
     end
 
     RecordValuePoint()
+
+    -- If the first scan left anything unpriced, the price source is probably still
+    -- importing (common right after login); arm the slow self-heal so those slots
+    -- fill in on their own instead of waiting for a manual /bmw refresh.
+    StartPriceRetry()
 end
 
 function Valuation.OnCraftBagHidden()
     isBagVisible = false
+    -- No scanning work happens with the bag closed, so drop the retry timer too.
+    StopPriceRetry()
 end
 
 -- Explicit user-driven refresh (/bmw refresh): drop the price cache so prices
 -- re-query (e.g. after MM/TTC finished importing) and rebuild from scratch.
 function Valuation.ForceRefresh()
     ZO_ClearTable(priceCache)
+    -- A manual refresh supersedes any in-flight self-heal; stop it (and reset its
+    -- attempt budget) so a fresh retry can arm below if slots are still unpriced.
+    StopPriceRetry()
     isDirty = true
     if isBagVisible then
         FullRescan()
         RefreshWindow()
+        StartPriceRetry()
     end
 end
 
@@ -800,6 +924,9 @@ function Valuation.GetBackpackCapacityFor(itemId)
     while slotIndex do
         if GetItemId(BAG_BACKPACK, slotIndex) == itemId then
             local size = GetSlotStackSize(BAG_BACKPACK, slotIndex)
+            -- Strict `<`: a slot already at STACK_SIZE is a full stack with zero
+            -- room to top up, so it contributes nothing here (it's not "free
+            -- capacity", unlike the free-slot count added below).
             if size and size > 0 and size < STACK_SIZE then
                 capacity = capacity + (STACK_SIZE - size)
             end
@@ -880,11 +1007,9 @@ local function BuildMaterialRow(slotIndex, info)
         -- material is held in exactly one craft-bag slot, so this
         -- itemId -> slotIndex mapping is 1:1 for the run.
         slotIndex = slotIndex,
-        -- GetItemLinkName returns the raw, unformatted name (often lower-case in
-        -- the client's data, e.g. "rubedite ore"); the game title-cases and
-        -- cleans it via zo_strformat before display, so do the same here or
-        -- names render lower-case.
-        name = zo_strformat(SI_TOOLTIP_ITEM_NAME, GetItemLinkName(itemLink)),
+        -- Resolved (and memoized) display name; see GetDisplayName. Stable per
+        -- itemId, so the detail window's repeated rebuilds reuse it.
+        name = GetDisplayName(info.itemId, itemLink),
         icon = GetItemLinkIcon(itemLink),
         quality = quality,
         count = info.stack,
@@ -948,7 +1073,7 @@ function Valuation.GetMaterialsMatching(query)
 
     local needle = stringlower(query)
     for slotIndex, info in pairs(slotInfo) do
-        local name = zo_strformat(SI_TOOLTIP_ITEM_NAME, GetItemLinkName(GetItemLink(BAG, slotIndex)))
+        local name = GetDisplayName(info.itemId, GetItemLink(BAG, slotIndex))
         if stringfind(stringlower(name), needle, 1, true) then
             materials[#materials + 1] = BuildMaterialRow(slotIndex, info)
         end
@@ -1036,7 +1161,7 @@ function Valuation.CaptureSnapshot()
                 -- re-resolve the name into the current game language; keep the
                 -- resolved name too as a fallback for the row builders.
                 link = itemLink,
-                name = zo_strformat(SI_TOOLTIP_ITEM_NAME, GetItemLinkName(itemLink)),
+                name = GetDisplayName(info.itemId, itemLink),
                 icon = GetItemLinkIcon(itemLink),
                 quality = GetItemLinkFunctionalQuality(itemLink),
                 count = info.stack,
@@ -1123,7 +1248,7 @@ function Valuation.GetDiffMaterials()
             local itemLink = GetItemLink(BAG, cur.slotIndex)
             rows[#rows + 1] = {
                 itemId = itemId,
-                name = zo_strformat(SI_TOOLTIP_ITEM_NAME, GetItemLinkName(itemLink)),
+                name = GetDisplayName(itemId, itemLink),
                 icon = GetItemLinkIcon(itemLink),
                 quality = GetItemLinkFunctionalQuality(itemLink),
                 diff = true,

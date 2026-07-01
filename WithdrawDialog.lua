@@ -9,7 +9,6 @@ local private = addon.private
 -- run, and the capacity scan walks the whole backpack.
 local GetString              = GetString
 local stringformat           = string.format
-local zo_round               = zo_round
 local mathmin                = math.min
 local mathmax                = math.max
 local mathfloor              = math.floor
@@ -62,21 +61,13 @@ local function DefaultQuantityForQuality(quality)
     return DEFAULT_QUANTITY_BY_QUALITY[quality] or DEFAULT_QUANTITY_FALLBACK
 end
 
--- Palette (shared house style; local copy, matching DetailWindow.lua).
-local COLOR_ACCENT = "6FCB9F"
-local COLOR_MUTED  = "8C8A82"
-local COLOR_GOLD   = "F4D03F"
-local COLOR_WARN   = "D0905E"
+-- Palette (shared house style; see private.COLOR_* in BureauOfMaterialWorth.lua)
+local COLOR_ACCENT = private.COLOR_ACCENT
+local COLOR_MUTED  = private.COLOR_MUTED
+local COLOR_WARN   = private.COLOR_WARN
 
-local GOLD_ICON = "|t16:16:EsoUI/Art/currency/currency_gold.dds|t"
-
-local function Colorize(hex, text)
-    return stringformat("|c%s%s|r", hex, text)
-end
-
-local function FormatGold(amount)
-    return Colorize(COLOR_GOLD, ZO_LocalizeDecimalNumber(zo_round(amount or 0))) .. " " .. GOLD_ICON
-end
+local Colorize = private.Colorize
+local FormatGold = private.FormatGold
 
 local LogDebug = private.LogDebug
 
@@ -290,9 +281,11 @@ local popupPresetButtons = {}
 local popupConfirm, popupCancel
 local popupProgressBar, popupProgressLabel
 
--- Current material under the popup.
+-- Current material under the popup. The itemId/slot/price/priced fields are read
+-- across the popup's lifetime (ComputeMax, RenderPopup, Confirm), so they persist
+-- at module scope; the name/icon/quality are only needed to paint the title on
+-- open, so they live as locals inside Open rather than lingering here.
 local curItemId, curSlotIndex, curUnitPrice, curPriced
-local curName, curIcon, curQuality
 local curRequested = 0
 local curMax = 0
 local suppressEditEvent = false  -- guards the editbox sanitizer against its own SetText
@@ -586,9 +579,11 @@ function WithdrawDialog.Open(materialData)
     curSlotIndex = materialData.slotIndex
     curUnitPrice = materialData.unitPrice
     curPriced = materialData.priced
-    curName = materialData.name
-    curIcon = materialData.icon
-    curQuality = materialData.quality
+    -- Name/icon/quality are only used to paint the title and seed the default
+    -- quantity here, so they stay local to this call rather than at module scope.
+    local curName = materialData.name
+    local curIcon = materialData.icon
+    local curQuality = materialData.quality
 
     popupIcon:SetTexture(curIcon)
     popupTitle:SetText(Colorize(COLOR_ACCENT, stringformat(GetString(SI_BMW_WITHDRAW_TITLE),
