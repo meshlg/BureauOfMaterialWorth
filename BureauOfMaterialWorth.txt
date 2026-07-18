@@ -1,0 +1,35 @@
+## Title: |c6FCB9FBureau|r of Material Worth
+## Version: 2.0.07071455
+## AddOnVersion: 2000
+## APIVersion: 101050
+## Author: |c6FCB9Fmeshlg|r @ArtieFox
+## Description: Know what your Craft Bag is worth. Sums its market value (via LibPrice) with a per-profession breakdown and a clickable, scrollable material list.
+## SavedVariables: BureauOfMaterialWorth_SavedVariables
+## DependsOn: LibAddonMenu-2.0>=43 LibPrice>=70530
+
+
+
+; Localization files are loaded in the following order, with later files overriding earlier ones. This allows for a default English localization to be provided, while still allowing users to create their own localizations without needing to copy the entire file.
+Localization/en.lua
+Localization/$(language).lua
+; ---------------------------------------------------------------------------
+
+; The main addon files are loaded in the following order, with later files overriding earlier ones. This allows for a clear separation of concerns and modularity in the codebase.
+BureauOfMaterialWorth.lua
+Valuation.lua
+Window.lua
+DetailWindow.xml
+DetailWindow.lua
+WithdrawDialog.lua
+Settings.lua
+; ---------------------------------------------------------------------------
+
+
+
+; This Add-on is not created by, affiliated with or sponsored by ZeniMax
+; Media Inc. or its affiliates. The Elder Scrolls® and related logos are
+; registered trademarks or trademarks of ZeniMax Media Inc. in the United
+; States and/or other countries. All rights reserved.
+;
+; You can read the full terms at:
+; https://account.elderscrollsonline.com/add-on-terms

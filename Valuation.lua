@@ -1,0 +1,1384 @@
+local addon = BureauOfMaterialWorth
+addon.Valuation = addon.Valuation or {}
+
+local Valuation = addon.Valuation
+local private = addon.private
+
+-- Hot-path global caching
+-- ---------------------------------------------------------------------------
+-- The full rescan touches these once per slot across potentially hundreds of
+-- slots; bind them to upvalues so the scan is upvalue reads, not _G hash
+-- lookups. See the same rationale in BureauOfMaterialWorth.lua.
+local GetSlotStackSize          = GetSlotStackSize
+local GetItemId                 = GetItemId
+local GetItemLink               = GetItemLink
+local GetItemLinkItemType       = GetItemLinkItemType
+local ZO_GetNextBagSlotIndex    = ZO_GetNextBagSlotIndex
+local GetNumBagFreeSlots        = GetNumBagFreeSlots
+local LibPrice                  = LibPrice
+
+-- The player's normal inventory: the destination for craft-bag withdrawals and
+-- the bag the backpack-capacity helper scans. Bound here alongside BAG_VIRTUAL
+-- so the capacity scan is upvalue reads like the rest of the hot path.
+local BAG_BACKPACK              = BAG_BACKPACK
+
+-- Display-field + price-history helpers, only touched lazily when the detail
+-- window is opened (never on the per-slot scan path), but bound here for
+-- consistency with the rest of the module.
+local GetItemLinkName             = GetItemLinkName
+local GetItemLinkIcon             = GetItemLinkIcon
+local GetItemLinkFunctionalQuality = GetItemLinkFunctionalQuality
+local GetItemQualityColor         = GetItemQualityColor
+local GetTimeStamp                = GetTimeStamp
+local zo_round                    = zo_round
+local mathabs                     = math.abs
+local zo_strformat                = zo_strformat
+local tablesort                   = table.sort
+local stringlower                 = string.lower
+local stringfind                  = string.find
+
+local BAG = BAG_VIRTUAL
+
+-- A "classic" inventory stack is 200 identical items. The craft bag itself has
+-- no such limit (one material = one unbounded slot), so we report two distinct
+-- figures that must never be conflated:
+--   slots  -- occupied craft-bag slots == number of distinct materials
+--   stacks -- ceil(items / STACK_SIZE), how many 200-item stacks the volume is
+-- The slot count is what the incremental aggregates track; the stack count is
+-- derived from the item total at snapshot time (see GetSnapshot).
+local STACK_SIZE = 200
+
+-- Price-history bookkeeping for the detail window's "price change" column.
+-- ---------------------------------------------------------------------------
+-- We keep one baseline price per itemId in savedVars and compare the current
+-- price against it to show a growth %. RECORD_INTERVAL_SECONDS gates how often
+-- the baseline advances: recording on every view would make the delta read ~0%
+-- forever (you'd be comparing a price against itself seconds later), so the
+-- baseline only moves once roughly a day has passed -- the figure then reflects
+-- day-over-day market drift. PRUNE_MAX_AGE_SECONDS drops baselines for
+-- materials the user hasn't viewed in a month so the table can't grow forever.
+local RECORD_INTERVAL_SECONDS = 20 * 60 * 60   -- ~20h
+local PRUNE_MAX_AGE_SECONDS   = 30 * 24 * 60 * 60  -- 30 days
+
+-- Grand-total value history (the footer sparkline)
+-- ---------------------------------------------------------------------------
+-- One sample of the whole-bag valuation is recorded per craft-bag open, into a
+-- fixed-size ring buffer in savedVars (valueHistory). The ring is capacity-
+-- bounded so it can never grow without limit -- old samples are overwritten in
+-- place rather than shifted, so a write is O(1) and there is nothing to prune.
+-- VALUE_HISTORY_MIN_INTERVAL collapses an "open/close/open" burst into a single
+-- moving sample: within the window the latest open just updates the newest
+-- point instead of appending, so the sparkline keeps a meaningful time scale
+-- rather than filling with points minutes apart.
+local VALUE_HISTORY_CAPACITY     = 90
+local VALUE_HISTORY_MIN_INTERVAL = 4 * 60 * 60  -- ~4h
+
+
+local zo_ceil = zo_ceil
+
+-- Number of classic 200-item stacks a raw item count occupies. 0 items -> 0
+-- stacks; any partial stack rounds up to a whole one.
+local function ItemsToStacks(items)
+    if not items or items <= 0 then
+        return 0
+    end
+    return zo_ceil(items / STACK_SIZE)
+end
+
+local LogDebug = private.LogDebug
+local LogInfo = private.LogInfo
+local ChatInfo = private.ChatInfo
+
+-- LibPrice source keys (the second return of ItemLinkToPriceGold) mapped to
+-- their labels. One row per source so the full name and the compact footer label
+-- can never drift apart: `display` is the human-readable name (LibPrice ships no
+-- such map, so we keep our own), `short` the tight label for the footer value
+-- column where the full name would not fit. An unknown key falls back to the raw
+-- string (display) or its upper-cased form (short) rather than erroring.
+local SOURCE_INFO = {
+    mm    = { display = "Master Merchant",       short = "MM" },
+    att   = { display = "Arkadius' Trade Tools",  short = "ATT" },
+    ttc   = { display = "Tamriel Trade Centre",   short = "TTC" },
+    furc  = { display = "Furniture Catalogue",    short = "FurC" },
+    crown = { display = "Crown Store",            short = "Crown" },
+    rolis = { display = "Rolis Hlaalu",           short = "Rolis" },
+    npc   = { display = "NPC Vendor",             short = "NPC" },
+}
+
+local function SourceDisplayName(sourceKey)
+    if not sourceKey then
+        return nil
+    end
+    local info = SOURCE_INFO[sourceKey]
+    return (info and info.display) or sourceKey
+end
+
+local function SourceShortName(sourceKey)
+    if not sourceKey then
+        return nil
+    end
+    local info = SOURCE_INFO[sourceKey]
+    return (info and info.short) or string.upper(sourceKey)
+end
+
+-- Public: resolve a LibPrice source key ("mm"/"ttc"/...) to its full display name
+-- ("Master Merchant"/...). Exposed so the detail-row tooltip can name the price
+-- source carried on each material row. Returns nil for a nil key.
+function Valuation.GetSourceDisplayName(sourceKey)
+    return SourceDisplayName(sourceKey)
+end
+
+-- Category model
+-- ---------------------------------------------------------------------------
+-- Categories mirror the crafting professions the craft bag is organized by.
+-- The id is a stable string key; the nameKey is the localized display string.
+-- Order here is the display order in the window. Anything that does not map to
+-- a known crafting profession (style/trait/furnishing mats, etc.) lands in
+-- "other".
+local CATEGORY_DEFINITIONS = {
+    { id = "blacksmithing", nameKey = SI_BMW_CATEGORY_BLACKSMITHING },
+    { id = "clothier",      nameKey = SI_BMW_CATEGORY_CLOTHIER },
+    { id = "woodworking",   nameKey = SI_BMW_CATEGORY_WOODWORKING },
+    { id = "jewelry",       nameKey = SI_BMW_CATEGORY_JEWELRY },
+    { id = "alchemy",       nameKey = SI_BMW_CATEGORY_ALCHEMY },
+    { id = "enchanting",    nameKey = SI_BMW_CATEGORY_ENCHANTING },
+    { id = "provisioning",  nameKey = SI_BMW_CATEGORY_PROVISIONING },
+    { id = "other",         nameKey = SI_BMW_CATEGORY_OTHER },
+}
+
+-- ITEMTYPE -> category id map.
+-- ---------------------------------------------------------------------------
+-- Built once at load from the game's ITEMTYPE_* constants grouped by
+-- profession. We map item types explicitly rather than calling a crafting-type
+-- API because there is no global that returns "the item types for this
+-- profession" in the live client. Each constant is referenced by name and
+-- nil-guarded at build time (see BuildItemTypeMap), so a client build that
+-- lacks one of these constants simply leaves that type unmapped -- it falls
+-- back to "other" instead of erroring. Initialized empty (not nil) so a lookup
+-- before BuildItemTypeMap() runs is a safe miss -> "other".
+--
+-- The grouping uses raw material + refined material + booster (tempers/tannins/
+-- resins/plating) per equipment profession; reagents/solvents for alchemy;
+-- runestones for enchanting; ingredients for provisioning. Style materials,
+-- trait stones, and furnishing mats intentionally fall through to "other".
+local CATEGORY_ITEM_TYPES = {
+    blacksmithing = {
+        "ITEMTYPE_BLACKSMITHING_RAW_MATERIAL",
+        "ITEMTYPE_BLACKSMITHING_MATERIAL",
+        "ITEMTYPE_BLACKSMITHING_BOOSTER",
+    },
+    clothier = {
+        "ITEMTYPE_CLOTHIER_RAW_MATERIAL",
+        "ITEMTYPE_CLOTHIER_MATERIAL",
+        "ITEMTYPE_CLOTHIER_BOOSTER",
+    },
+    woodworking = {
+        "ITEMTYPE_WOODWORKING_RAW_MATERIAL",
+        "ITEMTYPE_WOODWORKING_MATERIAL",
+        "ITEMTYPE_WOODWORKING_BOOSTER",
+    },
+    jewelry = {
+        "ITEMTYPE_JEWELRYCRAFTING_RAW_MATERIAL",
+        "ITEMTYPE_JEWELRYCRAFTING_MATERIAL",
+        "ITEMTYPE_JEWELRYCRAFTING_RAW_BOOSTER",
+        "ITEMTYPE_JEWELRYCRAFTING_BOOSTER",
+    },
+    alchemy = {
+        "ITEMTYPE_REAGENT",
+        "ITEMTYPE_POTION_BASE",
+        "ITEMTYPE_POISON_BASE",
+    },
+    enchanting = {
+        "ITEMTYPE_ENCHANTING_RUNE_ASPECT",
+        "ITEMTYPE_ENCHANTING_RUNE_ESSENCE",
+        "ITEMTYPE_ENCHANTING_RUNE_POTENCY",
+    },
+    provisioning = {
+        "ITEMTYPE_INGREDIENT",
+    },
+}
+
+-- Initialized empty so a category lookup is always safe even before the map is
+-- built; BuildItemTypeMap() fills it on load.
+local itemTypeToCategory = {}
+
+local function BuildItemTypeMap()
+    ZO_ClearTable(itemTypeToCategory)
+    for categoryId, itemTypeNames in pairs(CATEGORY_ITEM_TYPES) do
+        for i = 1, #itemTypeNames do
+            -- Resolve the ITEMTYPE_* constant by name from the global table and
+            -- skip it if this client build does not define it. This keeps a
+            -- missing/renamed constant from erroring at load -- the type just
+            -- stays unmapped and resolves to "other".
+            local itemType = _G[itemTypeNames[i]]
+            if itemType ~= nil then
+                itemTypeToCategory[itemType] = categoryId
+            end
+        end
+    end
+end
+
+local function ResolveCategory(itemLink)
+    local itemType = GetItemLinkItemType(itemLink)
+    return itemTypeToCategory[itemType] or "other"
+end
+
+-- Module state
+-- ---------------------------------------------------------------------------
+-- slotInfo caches each slot's last computed contribution (value, category,
+-- stack size, priced flag) so a single-slot update can be applied
+-- incrementally -- subtract the slot's old contribution from the aggregates,
+-- recompute just that slot, add it back -- without rescanning the whole bag.
+-- priceCache memoizes LibPrice per itemId so each distinct material costs at
+-- most one (potentially expensive) LibPrice call per session. categoryStats
+-- holds the running per-category aggregates the window reads; the grand* values
+-- are the bag-wide rollup. This is the heart of the "no 5-10s freeze" design.
+--
+-- categoryStats[categoryId] = { gold, slots, items, unpricedSlots }
+--   gold          summed market value of the category
+--   slots         number of occupied craft-bag slots (== distinct materials)
+--   items         summed slot sizes (e.g. one slot of 350000 = 350000 items)
+--   unpricedSlots occupied slots with no available price
+-- The classic 200-item stack count is NOT stored here; it is derived from
+-- `items` via ItemsToStacks() at snapshot time so the two figures can never
+-- drift out of sync.
+local slotInfo = {}         -- [slotIndex] = { value, category, stack, priced, source }
+local priceCache = {}       -- [itemId] = per-unit gold (false = known-unpriced)
+local priceSource = {}      -- [itemId] = LibPrice source key ("mm"/"ttc"/...) when priced
+-- Display name per itemId, resolved lazily and memoized. A material's name is
+-- stable for its itemId, but GetItemLinkName + zo_strformat is not free, and the
+-- detail window resolves it repeatedly (every Populate: a sort, a search
+-- keystroke, a live refresh after a withdrawal). Caching it here turns those
+-- rebuilds into arithmetic. Keyed by itemId, so one entry serves every slot and
+-- both the row builders and the search filter.
+local nameCache = {}        -- [itemId] = resolved display name
+local categoryStats = {}    -- [categoryId] = { gold, slots, items, unpricedSlots }
+local sourceCounts = {}     -- [sourceKey] = number of priced slots sourced from it
+
+local grandGold = 0
+local grandSlots = 0
+local grandItems = 0
+local grandUnpricedSlots = 0
+
+-- "Since last visit" delta shown in the footer, recomputed once per bag open.
+-- Two baselines feed it depending on the user's deltaMode setting:
+--   "visit"   -- compare against the previous bag open; baseline persists in
+--                savedVars (lastVisitGold/Items) so it survives a restart.
+--   "session" -- compare against the first open after UI load; baseline lives in
+--                the memory upvalues below and resets on /reloadui or logout.
+-- In both modes the gold delta is gated on the item count changing, so a pure
+-- price drift (restart + price reimport, same stock) reports no delta.
+local deltaSinceLastVisit = nil
+local sessionBaseGold = nil   -- session-mode baseline: gold at first open this session
+local sessionBaseItems = nil  -- session-mode baseline: item count alongside it
+local visitNotified = false   -- emitted the "since last visit" chat line yet this session?
+local visitFinalizePending = false  -- an open is waiting to finalize its delta/history once prices settle
+-- Forward-declared: StartPriceRetry (defined above FinalizeVisit) calls it from
+-- its timer callback once the last unpriced slot heals or the budget is spent.
+local FinalizeVisit
+
+local lastScanTimeMs = nil  -- GetGameTimeMilliseconds() of the last full/partial recompute
+local isDirty = true        -- valuation may be stale; rescan on next show
+local isBagVisible = false
+
+-- Append the current grand total to the value-history ring buffer. Called once
+-- per craft-bag open (after the delta block, so grandGold/grandItems are the
+-- just-computed figures). The buffer never shifts: `head` is the index of the
+-- newest sample and writes wrap modulo VALUE_HISTORY_CAPACITY, overwriting the
+-- oldest entry once full. A new open within VALUE_HISTORY_MIN_INTERVAL of the
+-- newest sample updates that sample in place instead of appending, so a rapid
+-- open/close/open burst stays one point and the sparkline keeps a real time
+-- scale. No-op without savedVars (pre-init) so it is safe to call unguarded.
+local function RecordValuePoint()
+    local sv = private.savedVars
+    if not sv then
+        return
+    end
+
+    local hist = sv.valueHistory
+    if not hist or type(hist) ~= "table" then
+        hist = { head = 0, entries = {} }
+        sv.valueHistory = hist
+    end
+    -- An older save (or a partially-defaulted table) may lack either field.
+    hist.entries = hist.entries or {}
+    hist.head = hist.head or 0
+
+    local now = GetTimeStamp()
+    local newest = hist.head > 0 and hist.entries[hist.head] or nil
+    if newest and newest.t and (now - newest.t) < VALUE_HISTORY_MIN_INTERVAL then
+        -- Still inside the same sampling window: move the newest point forward
+        -- rather than adding a near-duplicate.
+        newest.t = now
+        newest.gold = grandGold
+        newest.items = grandItems
+        return
+    end
+
+    local nextHead = (hist.head % VALUE_HISTORY_CAPACITY) + 1
+    hist.entries[nextHead] = { t = now, gold = grandGold, items = grandItems }
+    hist.head = nextHead
+end
+
+
+-- Coalesced refresh: a burst of slot updates (e.g. dumping a 200-item stack,
+-- which fires per-slot events) should yield ONE window refresh, not one per
+-- event. Mirrors the throttled-save pattern in BAV's QueueSave.
+local REFRESH_DELAY_MS = 100
+local refreshQueued = false
+local REFRESH_TIMER_NAME = addon.name .. "_QueuedRefresh"
+
+-- Unpriced-slot self-heal
+-- ---------------------------------------------------------------------------
+-- A price source (Master Merchant / TTC / ATT) often finishes importing its data
+-- a minute or two AFTER login, so the first scan of a freshly-opened bag can mark
+-- materials unpriced that will have a price shortly. The cache stores that verdict
+-- as false and never re-queries it within a session (by design -- see
+-- GetUnitPrice), so without this the panel would keep showing "unpriced" until the
+-- user manually hit /bmw refresh. Instead, while the bag is open and something is
+-- unpriced, a slow timer re-queries just the unpriced slots and folds any
+-- newly-available prices into the aggregates. It is bounded: it stops as soon as
+-- everything is priced, gives up after PRICE_RETRY_MAX_ATTEMPTS (the sources have
+-- long since imported by then), and only runs while the bag is visible.
+local PRICE_RETRY_INTERVAL_MS  = 15000  -- re-query unpriced slots every ~15s
+local PRICE_RETRY_MAX_ATTEMPTS = 8      -- ~2 min total, then give up until refresh
+local PRICE_RETRY_TIMER_NAME   = addon.name .. "_PriceRetry"
+local priceRetryQueued = false
+local priceRetryAttempts = 0
+
+local function GetOrCreateCategoryStat(categoryId)
+    local stat = categoryStats[categoryId]
+    if not stat then
+        stat = { gold = 0, slots = 0, items = 0, unpricedSlots = 0 }
+        categoryStats[categoryId] = stat
+    end
+    return stat
+end
+
+-- Per-unit price for an itemId, memoized. Returns the per-unit gold (or 0 when
+-- no source has data), a priced flag, and the LibPrice source key the price came
+-- from ("mm"/"ttc"/"att"/...) or nil when unpriced. We cache the "unpriced"
+-- verdict as false so a missing price is not re-queried on every rescan within a
+-- session; the source key is memoized alongside it.
+local function GetUnitPrice(itemId, itemLink)
+    local cached = priceCache[itemId]
+    if cached ~= nil then
+        return cached or 0, cached ~= false, priceSource[itemId]
+    end
+
+    local gold, sourceKey = LibPrice.ItemLinkToPriceGold(itemLink)
+    if gold and gold > 0 then
+        priceCache[itemId] = gold
+        priceSource[itemId] = sourceKey
+        return gold, true, sourceKey
+    end
+
+    priceCache[itemId] = false
+    priceSource[itemId] = nil
+    return 0, false, nil
+end
+
+-- Resolved display name for an itemId, memoized. The name is stable per itemId,
+-- so this is resolved once (GetItemLinkName + the game's title-casing via
+-- zo_strformat) and reused across the detail window's many rebuilds -- a sort, a
+-- search keystroke, or a live refresh no longer re-resolve every row. The link is
+-- the language-independent source of truth, so a stale name never survives a
+-- game-language change within a session (the cache lives only for the session).
+local function GetDisplayName(itemId, itemLink)
+    local cached = nameCache[itemId]
+    if cached ~= nil then
+        return cached
+    end
+    -- GetItemLinkName returns the raw, often lower-case name; zo_strformat title-
+    -- cases and cleans it the way the game shows it (see BuildMaterialRow).
+    local name = zo_strformat(SI_TOOLTIP_ITEM_NAME, GetItemLinkName(itemLink))
+    nameCache[itemId] = name
+    return name
+end
+
+-- Compute a single slot's contribution WITHOUT touching the running aggregates.
+-- Returns an info record { value, category, stack, priced, source } for an
+-- occupied slot, or nil for an empty/unknown slot. Empty virtual slots (the
+-- craft bag keeps slots around after a material is fully removed) have stack
+-- size 0 and contribute nothing -- this is the GetItemId/stack guard the user
+-- called out.
+local function ComputeSlot(slotIndex)
+    local stack = GetSlotStackSize(BAG, slotIndex)
+    if not stack or stack <= 0 then
+        return nil
+    end
+
+    local itemId = GetItemId(BAG, slotIndex)
+    if not itemId or itemId <= 0 then
+        return nil
+    end
+
+    local itemLink = GetItemLink(BAG, slotIndex)
+    local unitPrice, wasPriced, sourceKey = GetUnitPrice(itemId, itemLink)
+    return {
+        value = unitPrice * stack,
+        category = ResolveCategory(itemLink),
+        stack = stack,
+        priced = wasPriced,
+        source = sourceKey,
+        itemId = itemId,
+    }
+end
+
+-- Remove a slot's previously-cached contribution from the aggregates. Safe to
+-- call for a slot we have never seen (no-op).
+local function RemoveSlotFromAggregates(slotIndex)
+    local info = slotInfo[slotIndex]
+    if info == nil then
+        return
+    end
+
+    local stat = categoryStats[info.category]
+    if stat then
+        stat.gold = stat.gold - info.value
+        stat.slots = stat.slots - 1
+        stat.items = stat.items - info.stack
+        if not info.priced then
+            stat.unpricedSlots = stat.unpricedSlots - 1
+        end
+        if stat.slots <= 0 then
+            categoryStats[info.category] = nil
+        end
+    end
+
+    grandGold = grandGold - info.value
+    grandSlots = grandSlots - 1
+    grandItems = grandItems - info.stack
+    if not info.priced then
+        grandUnpricedSlots = grandUnpricedSlots - 1
+    end
+
+    -- Drop this slot from the per-source tally so the footer's "Prices: X"
+    -- reflects only currently-occupied priced slots.
+    if info.source then
+        local count = sourceCounts[info.source]
+        if count then
+            count = count - 1
+            sourceCounts[info.source] = count > 0 and count or nil
+        end
+    end
+
+    slotInfo[slotIndex] = nil
+end
+
+-- Add a freshly-computed slot contribution into the aggregates and cache it.
+local function AddSlotToAggregates(slotIndex, info)
+    if info == nil then
+        -- Empty/unknown slot: nothing cached, nothing added.
+        return
+    end
+
+    slotInfo[slotIndex] = info
+
+    local stat = GetOrCreateCategoryStat(info.category)
+    stat.gold = stat.gold + info.value
+    stat.slots = stat.slots + 1
+    stat.items = stat.items + info.stack
+    if not info.priced then
+        stat.unpricedSlots = stat.unpricedSlots + 1
+    end
+
+    grandGold = grandGold + info.value
+    grandSlots = grandSlots + 1
+    grandItems = grandItems + info.stack
+    if not info.priced then
+        grandUnpricedSlots = grandUnpricedSlots + 1
+    end
+
+    if info.source then
+        sourceCounts[info.source] = (sourceCounts[info.source] or 0) + 1
+    end
+end
+
+local function ResetAggregates()
+    ZO_ClearTable(slotInfo)
+    ZO_ClearTable(categoryStats)
+    ZO_ClearTable(sourceCounts)
+    grandGold = 0
+    grandSlots = 0
+    grandItems = 0
+    grandUnpricedSlots = 0
+end
+
+-- Full single-pass scan of the craft bag, rebuilding every aggregate from the
+-- (memoized) price cache. This is the only O(slots) operation, and it runs at
+-- most once per craft-bag open (and only when dirty) or on explicit refresh.
+local function FullRescan()
+    ResetAggregates()
+
+    local slotIndex = ZO_GetNextBagSlotIndex(BAG)
+    local scanned = 0
+    while slotIndex do
+        AddSlotToAggregates(slotIndex, ComputeSlot(slotIndex))
+        scanned = scanned + 1
+        slotIndex = ZO_GetNextBagSlotIndex(BAG, slotIndex)
+    end
+
+    lastScanTimeMs = GetGameTimeMilliseconds()
+    isDirty = false
+    LogInfo(SI_BMW_LOG_RESCAN_DONE, scanned, ZO_LocalizeDecimalNumber(zo_round(grandGold)))
+end
+
+local function RefreshWindow()
+    local window = addon.Window
+    if window and isBagVisible then
+        window.Update()
+    end
+
+    -- A withdrawal shrinks the craft-bag stack, so the open detail table would
+    -- otherwise show stale Qty/Value. Refresh it too; it is a no-op when the
+    -- detail window is hidden, and rides the same coalescing as the panel.
+    local detail = addon.DetailWindow
+    if detail and detail.Refresh then
+        detail.Refresh()
+    end
+end
+
+-- Collapse a burst of slot updates into a single window refresh.
+local function QueueWindowRefresh()
+    if refreshQueued then
+        return
+    end
+    refreshQueued = true
+    EVENT_MANAGER:RegisterForUpdate(REFRESH_TIMER_NAME, REFRESH_DELAY_MS, function()
+        EVENT_MANAGER:UnregisterForUpdate(REFRESH_TIMER_NAME)
+        refreshQueued = false
+        RefreshWindow()
+    end)
+end
+
+-- Re-price the currently-unpriced slots and fold any now-available prices into
+-- the aggregates. Walks slotInfo (cheap: it is the occupied slots, not the whole
+-- bag), and for each slot still flagged unpriced drops its cached "false" verdict
+-- so GetUnitPrice re-queries LibPrice, then re-applies the slot incrementally
+-- (remove old contribution, recompute, add back) exactly like a single-slot
+-- update. Returns how many slots became priced this pass, so the caller can tell
+-- whether the retry made progress. Touches nothing when nothing is unpriced.
+local function RepriceUnpricedSlots()
+    if grandUnpricedSlots <= 0 then
+        return 0
+    end
+
+    -- Collect first, then mutate: RemoveSlotFromAggregates rewrites slotInfo, so
+    -- iterating it while editing would be unsafe.
+    local stale = {}
+    for slotIndex, info in pairs(slotInfo) do
+        if not info.priced then
+            stale[#stale + 1] = { slotIndex = slotIndex, itemId = info.itemId }
+        end
+    end
+
+    local healed = 0
+    for i = 1, #stale do
+        -- Drop the memoized "unpriced" verdict so ComputeSlot re-queries LibPrice.
+        priceCache[stale[i].itemId] = nil
+        RemoveSlotFromAggregates(stale[i].slotIndex)
+        local info = ComputeSlot(stale[i].slotIndex)
+        AddSlotToAggregates(stale[i].slotIndex, info)
+        if info and info.priced then
+            healed = healed + 1
+        end
+    end
+
+    if healed > 0 then
+        lastScanTimeMs = GetGameTimeMilliseconds()
+    end
+    return healed
+end
+
+-- Stop the unpriced-slot retry timer and reset its state, so a later open starts
+-- a fresh attempt budget. Safe to call when no timer is running.
+local function StopPriceRetry()
+    EVENT_MANAGER:UnregisterForUpdate(PRICE_RETRY_TIMER_NAME)
+    priceRetryQueued = false
+    priceRetryAttempts = 0
+end
+
+-- Arm the slow retry that heals prices which imported after the first scan (see
+-- the PRICE_RETRY_* note above). No-op when everything is already priced, when a
+-- retry is already armed, or when the bag is not visible (we do no work with the
+-- bag closed). Each tick re-queries the unpriced slots; it refreshes the window
+-- when a price heals, and stops once everything is priced or the attempt budget
+-- is spent.
+local function StartPriceRetry()
+    if priceRetryQueued or grandUnpricedSlots <= 0 or not isBagVisible then
+        return
+    end
+    priceRetryQueued = true
+    priceRetryAttempts = 0
+
+    EVENT_MANAGER:RegisterForUpdate(PRICE_RETRY_TIMER_NAME, PRICE_RETRY_INTERVAL_MS, function()
+        priceRetryAttempts = priceRetryAttempts + 1
+
+        local healed = RepriceUnpricedSlots()
+        if healed > 0 then
+            RefreshWindow()
+        end
+
+        -- Stop once there is nothing left to heal or the budget is spent; the
+        -- price sources have long since finished importing by then, and a manual
+        -- /bmw refresh remains available for anything still missing.
+        if grandUnpricedSlots <= 0 or priceRetryAttempts >= PRICE_RETRY_MAX_ATTEMPTS then
+            StopPriceRetry()
+            -- Prices have settled (fully healed, or we gave up): capture the visit
+            -- baseline and history point now against the healed total, not the
+            -- understated first-scan figure. No-op if already finalized.
+            FinalizeVisit()
+        end
+    end)
+end
+
+-- EVENT_INVENTORY_SINGLE_SLOT_UPDATE handler (filtered to BAG_VIRTUAL).
+-- ---------------------------------------------------------------------------
+-- While the bag is closed we do NO work beyond marking the valuation dirty, so
+-- background deposits never cost a scan. While the bag is open we update only
+-- the one changed slot (O(1) on the aggregates) and coalesce the window
+-- refresh. A genuine full inventory update falls back to a dirty flag + rescan.
+local function OnSingleSlotUpdate(eventCode, bagId, slotIndex, isNewItem, soundCat, updateReason, stackCountChange)
+    if bagId ~= BAG then
+        return
+    end
+
+    if not isBagVisible then
+        isDirty = true
+        return
+    end
+
+    RemoveSlotFromAggregates(slotIndex)
+    local info = ComputeSlot(slotIndex)
+    AddSlotToAggregates(slotIndex, info)
+    lastScanTimeMs = GetGameTimeMilliseconds()
+    LogDebug(SI_BMW_LOG_SLOT_UPDATED, slotIndex, ZO_LocalizeDecimalNumber(zo_round(info and info.value or 0)))
+
+    QueueWindowRefresh()
+end
+
+-- EVENT_INVENTORY_FULL_UPDATE carries no bagId (unlike the single-slot event),
+-- so there is nothing to filter on here; a full update is not bag-scoped. We
+-- simply rescan the craft bag from scratch (or mark dirty while it is closed).
+local function OnFullInventoryUpdate()
+    if not isBagVisible then
+        isDirty = true
+        return
+    end
+
+    FullRescan()
+    QueueWindowRefresh()
+end
+
+-- Public API ----------------------------------------------------------------
+
+function Valuation.Initialize()
+    BuildItemTypeMap()
+
+    -- Drop stale price-history baselines accumulated across past sessions.
+    Valuation.PrunePriceHistory()
+
+    -- Single-slot updates are the common case (deposit/withdraw one material);
+    -- filter to the craft bag so we are never woken by backpack/bank churn.
+    EVENT_MANAGER:RegisterForEvent(addon.name, EVENT_INVENTORY_SINGLE_SLOT_UPDATE, OnSingleSlotUpdate)
+    EVENT_MANAGER:AddFilterForEvent(addon.name, EVENT_INVENTORY_SINGLE_SLOT_UPDATE,
+        REGISTER_FILTER_BAG_ID, BAG)
+
+    -- A full update (e.g. first login population) can't be filtered the same
+    -- way; the handler guards on bagId itself.
+    EVENT_MANAGER:RegisterForEvent(addon.name, EVENT_INVENTORY_FULL_UPDATE, OnFullInventoryUpdate)
+end
+
+-- Finalize the "since last visit" delta, advance the persisted baseline, emit the
+-- once-per-session chat line, and record the value-history point. Split out of
+-- OnCraftBagShown because all of these consume the just-computed grandGold: if the
+-- first scan left slots unpriced (price source still importing after login), running
+-- this immediately would bake an understated total into both the persisted baseline
+-- (inflating the NEXT visit's delta) and the sparkline. Instead OnCraftBagShown defers
+-- the call until prices have settled -- either right away when the first scan is fully
+-- priced, or from the price self-heal once it heals the last slot or exhausts its
+-- budget (and, as a backstop, on hide). Guarded to run at most once per open via
+-- visitFinalizePending. (Assigns the forward-declared local above, so the
+-- earlier StartPriceRetry can call it.)
+function FinalizeVisit()
+    if not visitFinalizePending then
+        return
+    end
+    visitFinalizePending = false
+
+    local sv = private.savedVars
+
+    -- "Since last visit" delta, computed once per open so incremental updates
+    -- during the visit don't move it under the user. The baseline depends on the
+    -- configured mode; in both, the gold delta is gated on the item count
+    -- changing so a pure price drift (restart + reimport, same stock) shows
+    -- nothing rather than a misleading "+2M".
+    local mode = (sv and sv.deltaMode) or "visit"
+
+    if mode == "session" then
+        -- Compare against the first open of this session; baseline lives in
+        -- memory and resets on reloadui/logout. Establish it on first open.
+        if sessionBaseGold ~= nil and sessionBaseItems ~= nil and sessionBaseItems ~= grandItems then
+            deltaSinceLastVisit = grandGold - sessionBaseGold
+        else
+            deltaSinceLastVisit = nil
+        end
+        if sessionBaseGold == nil then
+            sessionBaseGold = grandGold
+            sessionBaseItems = grandItems
+        end
+    elseif sv then
+        -- Visit mode: compare against the previous open, then advance the
+        -- persisted baseline so the next visit measures from here.
+        local previousGold = sv.lastVisitGold
+        local previousItems = sv.lastVisitItems
+        if previousGold ~= nil and previousItems ~= nil and previousItems ~= grandItems then
+            deltaSinceLastVisit = grandGold - previousGold
+        else
+            deltaSinceLastVisit = nil
+        end
+        sv.lastVisitGold = grandGold
+        sv.lastVisitItems = grandItems
+    else
+        deltaSinceLastVisit = nil
+    end
+
+    -- First open of the session: optionally announce the bag's value (and the
+    -- since-last-visit change, when there is one) in chat. Gated on its own
+    -- setting (on by default) and a once-per-session flag so it fires at login,
+    -- not on every reopen. The delta line is omitted when there's no baseline or
+    -- the stock is unchanged -- same gating as the footer, so the chat never
+    -- shows a misleading change.
+    if not visitNotified then
+        visitNotified = true
+        if not sv or sv.notifyOnVisit ~= false then
+            local total = ZO_LocalizeDecimalNumber(zo_round(grandGold))
+            if deltaSinceLastVisit and deltaSinceLastVisit ~= 0 then
+                local sign = deltaSinceLastVisit > 0 and "+" or "-"
+                local magnitude = ZO_LocalizeDecimalNumber(zo_round(mathabs(deltaSinceLastVisit)))
+                ChatInfo(SI_BMW_MSG_VISIT_DELTA, total, sign, magnitude)
+            else
+                ChatInfo(SI_BMW_MSG_VISIT_TOTAL, total)
+            end
+        end
+    end
+
+    RecordValuePoint()
+
+    -- Refresh so the footer picks up the just-computed delta (the delta was nil
+    -- while finalize was deferred; without this the footer would show no change
+    -- until the next window refresh).
+    RefreshWindow()
+end
+
+-- Called from the fragment StateChange callback when the craft bag is shown.
+-- Lazy: only rescans when something marked the valuation dirty since last time.
+function Valuation.OnCraftBagShown()
+    isBagVisible = true
+    if isDirty then
+        FullRescan()
+    end
+
+    -- One-time convenience baseline: take an automatic snapshot the first time a
+    -- populated bag is opened and no snapshot exists yet, so the "Changes" view
+    -- works without first pressing "Remember". Strictly gated so it never
+    -- surprises a user or wipes their data:
+    --   * not HasSnapshot()  -- never overwrite an existing snapshot; this is the
+    --     guard that protects a manual snapshot (a user with one is never touched).
+    --   * autoSnapshotDone    -- persisted, so it fires at most once ever and a
+    --     later manual "Clear" does not re-arm it.
+    --   * grandSlots > 0      -- real content, not an empty bag captured before
+    --     login finished populating it.
+    -- It is NOT a per-login capture: opening/closing the bag across sessions never
+    -- re-snapshots. After this one time the snapshot is fully user-owned.
+    local sv = private.savedVars
+    if sv and not sv.autoSnapshotDone
+        and not Valuation.HasSnapshot() and grandSlots > 0 then
+        sv.autoSnapshotDone = true
+        Valuation.CaptureSnapshot()
+    end
+
+    -- Defer the delta/baseline/history capture until prices have settled. If the
+    -- first scan is fully priced, finalize now; otherwise the price source is
+    -- probably still importing (common right after login) -- arm the slow
+    -- self-heal (below) and let it finalize once it fills the last slot or gives
+    -- up, so the persisted baseline and the sparkline record the real total rather
+    -- than an understated one. OnCraftBagHidden is a backstop for the case where
+    -- the bag is closed before the heal completes.
+    visitFinalizePending = true
+
+    -- If the first scan left anything unpriced, the price source is probably still
+    -- importing (common right after login); arm the slow self-heal so those slots
+    -- fill in on their own instead of waiting for a manual /bmw refresh. When
+    -- everything is already priced, StartPriceRetry is a no-op, so finalize here.
+    if grandUnpricedSlots <= 0 then
+        FinalizeVisit()
+    else
+        StartPriceRetry()
+    end
+end
+
+function Valuation.OnCraftBagHidden()
+    isBagVisible = false
+    -- No scanning work happens with the bag closed, so drop the retry timer too.
+    StopPriceRetry()
+    -- Backstop: if the bag is closed before the self-heal finished (or was never
+    -- fully priced), finalize now so the visit baseline still advances and the
+    -- history point is recorded exactly once per open.
+    FinalizeVisit()
+end
+
+-- Explicit user-driven refresh (/bmw refresh): drop the price cache so prices
+-- re-query (e.g. after MM/TTC finished importing) and rebuild from scratch.
+function Valuation.ForceRefresh()
+    ZO_ClearTable(priceCache)
+    -- A manual refresh supersedes any in-flight self-heal; stop it (and reset its
+    -- attempt budget) so a fresh retry can arm below if slots are still unpriced.
+    StopPriceRetry()
+    isDirty = true
+    if isBagVisible then
+        FullRescan()
+        RefreshWindow()
+        StartPriceRetry()
+    end
+end
+
+-- The price source covering the most priced slots, as a display name, plus a
+-- flag for whether more than one source contributed. Lets the footer read
+-- "Prices: Master Merchant" (or "... (+others)") so the user knows where the
+-- figures came from. Returns nil when nothing is priced.
+local function GetDominantSource()
+    local bestKey, bestCount = nil, 0
+    local distinct = 0
+    for sourceKey, count in pairs(sourceCounts) do
+        distinct = distinct + 1
+        if count > bestCount then
+            bestKey, bestCount = sourceKey, count
+        end
+    end
+    if not bestKey then
+        return nil, nil, false
+    end
+    return SourceDisplayName(bestKey), SourceShortName(bestKey), distinct > 1
+end
+
+-- Snapshot consumed by the window. Returns a single table so the window does one
+-- call and reads a stable view:
+--   {
+--     gold, slots, stacks, items, unpricedSlots,  -- bag-wide rollup
+--     delta,                                       -- gold change since last visit (or nil)
+--     sourceName, sourceHasOthers,                 -- dominant price source for the footer
+--     lastScanTimeMs,                              -- when the data was last computed
+--     categories = { { id, name, gold, slots, stacks, items, unpricedSlots }, ... }
+--   }
+-- `slots` is occupied craft-bag slots (distinct materials); `stacks` is the
+-- derived count of classic 200-item stacks (ceil(items / 200)). Category rows
+-- are emitted in canonical display order, or sorted by descending value when the
+-- caller passes sortByValue.
+-- Category comparator for the "sort by value" view: descending gold, stable
+-- alphabetical tie-break. Captures nothing, so it is defined once here rather
+-- than re-created on every GetSnapshot call.
+local function CompareCategoriesByValue(a, b)
+    if a.gold ~= b.gold then
+        return a.gold > b.gold
+    end
+    return a.name < b.name
+end
+
+function Valuation.GetSnapshot(sortByValue)
+    local categories = {}
+    for index = 1, #CATEGORY_DEFINITIONS do
+        local def = CATEGORY_DEFINITIONS[index]
+        local stat = categoryStats[def.id]
+        if stat and stat.slots > 0 then
+            categories[#categories + 1] = {
+                id = def.id,
+                name = GetString(def.nameKey),
+                gold = stat.gold,
+                slots = stat.slots,
+                stacks = ItemsToStacks(stat.items),
+                items = stat.items,
+                unpricedSlots = stat.unpricedSlots,
+            }
+        end
+    end
+
+    -- Optional: order categories by descending value so the biggest holdings
+    -- float to the top. Stable tie-break on name keeps the order deterministic.
+    if sortByValue then
+        table.sort(categories, CompareCategoriesByValue)
+    end
+
+    local sourceName, sourceShort, sourceHasOthers = GetDominantSource()
+
+    return {
+        gold = grandGold,
+        slots = grandSlots,
+        stacks = ItemsToStacks(grandItems),
+        items = grandItems,
+        unpricedSlots = grandUnpricedSlots,
+        delta = deltaSinceLastVisit,
+        deltaMode = (private.savedVars and private.savedVars.deltaMode) or "visit",
+        sourceName = sourceName,
+        sourceShort = sourceShort,
+        sourceHasOthers = sourceHasOthers,
+        lastScanTimeMs = lastScanTimeMs,
+        categories = categories,
+    }
+end
+
+function Valuation.GetStatus()
+    return grandGold, grandSlots - grandUnpricedSlots, grandUnpricedSlots
+end
+
+-- The value-history samples in chronological order (oldest -> newest), each
+-- { t = unix, gold, items }. The ring stores them out of array order (writes
+-- wrap around head), so this walks from the oldest slot forward to linearize
+-- them for the sparkline. O(stored points), called once per window render --
+-- never on the scan path. Returns an empty array when nothing is recorded yet.
+function Valuation.GetValueHistory()
+    local sv = private.savedVars
+    local hist = sv and sv.valueHistory
+    if not hist or not hist.entries or (hist.head or 0) == 0 then
+        return {}
+    end
+
+    local entries = hist.entries
+    local count = #entries
+    local head = hist.head
+    local out = {}
+    -- Before the ring fills, slots 1..head are in order and head == count, so
+    -- the walk below degenerates to 1..count. Once full, head is somewhere in
+    -- the middle and the oldest sample sits at head+1 (wrapping).
+    for offset = 1, count do
+        local idx = (head + offset - 1) % count + 1
+        out[#out + 1] = entries[idx]
+    end
+    return out
+end
+
+-- How many items of `itemId` the backpack can currently absorb, used by the
+-- withdraw dialog to show the max-withdrawable figure and to clamp the requested
+-- quantity. It is the sum of two things:
+--   1. the room left in any partial stack of the same item already in the
+--      backpack (each capped at STACK_SIZE), since a withdrawal tops those up
+--      before consuming an empty slot, and
+--   2. STACK_SIZE for every free backpack slot (each can hold a fresh 200).
+-- Read-only: it scans BAG_BACKPACK but touches none of the craft-bag aggregates.
+-- The caller clamps this against the craft-bag source stack, so the returned
+-- figure is purely the destination-side cap.
+function Valuation.GetBackpackCapacityFor(itemId)
+    if not itemId or itemId <= 0 then
+        return 0
+    end
+
+    local capacity = 0
+    local slotIndex = ZO_GetNextBagSlotIndex(BAG_BACKPACK)
+    while slotIndex do
+        if GetItemId(BAG_BACKPACK, slotIndex) == itemId then
+            local size = GetSlotStackSize(BAG_BACKPACK, slotIndex)
+            -- Strict `<`: a slot already at STACK_SIZE is a full stack with zero
+            -- room to top up, so it contributes nothing here (it's not "free
+            -- capacity", unlike the free-slot count added below).
+            if size and size > 0 and size < STACK_SIZE then
+                capacity = capacity + (STACK_SIZE - size)
+            end
+        end
+        slotIndex = ZO_GetNextBagSlotIndex(BAG_BACKPACK, slotIndex)
+    end
+
+    capacity = capacity + GetNumBagFreeSlots(BAG_BACKPACK) * STACK_SIZE
+    return capacity
+end
+
+-- Detail-window data + price history
+-- ---------------------------------------------------------------------------
+-- Everything below is touched ONLY when the user opens the per-category detail
+-- window (a click), never on the per-slot scan path. It resolves the heavier
+-- display fields (name/icon/quality) lazily from the item link and folds in a
+-- price-change figure from the persisted baseline.
+
+-- Read the persisted baseline for an itemId and, if it is stale (or missing),
+-- advance it to the current price. Returns growthPercent, growthDir (true =
+-- up/flat, false = down) and isNew (no prior baseline) for display. Read of the
+-- old value happens BEFORE the write so the very session that records a new
+-- baseline still shows the change against the previous one.
+local function ResolvePriceGrowth(itemId, curUnit)
+    local sv = private.savedVars
+    if not sv or not curUnit or curUnit <= 0 then
+        return nil, nil, false
+    end
+
+    local history = sv.priceHistory
+    if not history then
+        history = {}
+        sv.priceHistory = history
+    end
+
+    local now = GetTimeStamp()
+    local old = history[itemId]
+
+    local growthPercent, growthDir, isNew
+    if old and old.p and old.p > 0 then
+        growthPercent = (curUnit - old.p) / old.p * 100
+        growthDir = curUnit >= old.p
+        isNew = false
+    else
+        isNew = true
+    end
+
+    -- Advance the baseline only when there is none yet or the existing one has
+    -- aged past the record interval, so the displayed % reflects day-over-day
+    -- drift rather than "since I opened the bag moments ago".
+    if not old or not old.t or (now - old.t) >= RECORD_INTERVAL_SECONDS then
+        history[itemId] = { p = zo_round(curUnit), t = now }
+    end
+
+    return growthPercent, growthDir, isNew
+end
+
+-- Build one display row from a slot's cached info. Resolves the heavier display
+-- fields (name/icon/quality) and the price-growth figure lazily from the item
+-- link; shared by GetCategoryMaterials and GetMaterialsMatching so the row shape
+-- stays identical. See those functions for the returned field list.
+local function BuildMaterialRow(slotIndex, info)
+    local itemLink = GetItemLink(BAG, slotIndex)
+    local quality = GetItemLinkFunctionalQuality(itemLink)
+    local unitPrice
+    if info.stack and info.stack > 0 then
+        unitPrice = info.value / info.stack
+    else
+        unitPrice = 0
+    end
+
+    local growthPercent, growthDir, isNew = ResolvePriceGrowth(info.itemId, info.priced and unitPrice or nil)
+
+    return {
+        itemId = info.itemId,
+        -- The craft-bag slot this material occupies. Exposed so the withdraw
+        -- dialog can issue RequestMoveItem against the right source slot. A
+        -- material is held in exactly one craft-bag slot, so this
+        -- itemId -> slotIndex mapping is 1:1 for the run.
+        slotIndex = slotIndex,
+        -- Resolved (and memoized) display name; see GetDisplayName. Stable per
+        -- itemId, so the detail window's repeated rebuilds reuse it.
+        name = GetDisplayName(info.itemId, itemLink),
+        icon = GetItemLinkIcon(itemLink),
+        quality = quality,
+        count = info.stack,
+        gold = info.value,
+        unitPrice = unitPrice,
+        priced = info.priced,
+        -- The LibPrice source key ("mm"/"ttc"/...) this slot's price came from, so
+        -- the detail-row tooltip can name where the figure originates. nil when
+        -- unpriced. Resolve to a display name via Valuation.GetSourceDisplayName.
+        source = info.source,
+        growthPercent = growthPercent,
+        growthDir = growthDir,
+        isNew = isNew,
+    }
+end
+
+-- Sort material rows alphabetically by name, breaking ties by itemId so the
+-- order is stable across rebuilds.
+local function SortMaterialsByName(materials)
+    tablesort(materials, function(a, b)
+        if a.name ~= b.name then
+            return a.name < b.name
+        end
+        return a.itemId < b.itemId
+    end)
+end
+
+-- Per-material rows for one category, built lazily on detail-window open. O(slots)
+-- to filter slotInfo plus a GetItemLink* resolve per matching slot; runs once per
+-- click, not on the scan path. Returns an array sorted alphabetically by name:
+--   { itemId, slotIndex, name, icon, quality, count, gold, unitPrice, priced,
+--     growthPercent, growthDir, isNew }
+-- slotIndex is the craft-bag source slot, carried through so the withdraw dialog
+-- can move the material out. Relies on craft-bag slots being valid, which holds
+-- because the detail window is only reachable from the panel, shown only while
+-- the craft bag is open.
+function Valuation.GetCategoryMaterials(categoryId)
+    local materials = {}
+
+    for slotIndex, info in pairs(slotInfo) do
+        if info.category == categoryId then
+            materials[#materials + 1] = BuildMaterialRow(slotIndex, info)
+        end
+    end
+
+    SortMaterialsByName(materials)
+    return materials
+end
+
+-- Per-material rows across the WHOLE craft bag whose name contains `query`
+-- (case-insensitive substring), for the detail window's search box. Same row
+-- shape and sort as GetCategoryMaterials. An empty/nil query returns nothing, so
+-- the caller can treat "no query" as "not searching" rather than "match all".
+-- O(slots) with a name resolve per slot; runs once per keystroke (debounced by
+-- the caller), never on the scan path.
+function Valuation.GetMaterialsMatching(query)
+    local materials = {}
+    if not query or query == "" then
+        return materials
+    end
+
+    local needle = stringlower(query)
+    for slotIndex, info in pairs(slotInfo) do
+        local name = GetDisplayName(info.itemId, GetItemLink(BAG, slotIndex))
+        if stringfind(stringlower(name), needle, 1, true) then
+            materials[#materials + 1] = BuildMaterialRow(slotIndex, info)
+        end
+    end
+
+    SortMaterialsByName(materials)
+    return materials
+end
+
+-- Snapshot + diff
+-- ---------------------------------------------------------------------------
+-- A manual, single snapshot of the craft bag's composition, frozen on demand
+-- (the detail window's "Remember" button) and later diffed against the live bag
+-- ("Changes"). Stored in savedVars so it survives restarts. Shape:
+--   snapshot = {
+--     t, gold, items, slots,                 -- header captured at Remember time
+--     materials = { [itemId] = { link, name, icon, quality, count, unitPrice,
+--                                gold, priced } },
+--   }
+-- The item link is stored (not just the resolved name) because a name is frozen
+-- in the language that was active at Remember time, but a link is language-
+-- independent: GetItemLinkName re-resolves it into the CURRENT game language at
+-- diff time, even for a material that has since left the bag (no live slot). The
+-- resolved `name` is also kept as a fallback for snapshots taken before the link
+-- was persisted. icon/quality are language-independent, so storing them is fine.
+
+-- Resolve a snapshot material's display name in the current game language. Item
+-- links are language-independent, so re-resolving from the stored link each
+-- render keeps removed/changed rows in the active language rather than the one
+-- the snapshot was captured in. Falls back to the stored name for older
+-- snapshots that predate the persisted link.
+local function SnapshotMaterialName(entry)
+    if entry.link and entry.link ~= "" then
+        return zo_strformat(SI_TOOLTIP_ITEM_NAME, GetItemLinkName(entry.link))
+    end
+    return entry.name
+end
+
+-- Aggregate the current slotInfo by itemId. In practice the craft bag holds each
+-- material in exactly one slot, but aggregating is robust and keeps the diff keyed
+-- the same way as the stored snapshot. Returns { [itemId] = { count, gold,
+-- unitPrice, priced, slotIndex } }; slotIndex is any one source slot, kept only so
+-- a display name can be resolved lazily for added materials.
+local function AggregateCurrentByItemId()
+    local byId = {}
+    for slotIndex, info in pairs(slotInfo) do
+        local entry = byId[info.itemId]
+        if not entry then
+            entry = { count = 0, gold = 0, priced = info.priced, slotIndex = slotIndex }
+            byId[info.itemId] = entry
+        end
+        entry.count = entry.count + info.stack
+        entry.gold = entry.gold + info.value
+    end
+    -- Derive a representative unit price from the aggregate so a removed/added
+    -- material can be valued by its own per-unit figure.
+    for _, entry in pairs(byId) do
+        entry.unitPrice = entry.count > 0 and (entry.gold / entry.count) or 0
+    end
+    return byId
+end
+
+-- Freeze the current bag composition into savedVars, overwriting any prior
+-- snapshot (single-snapshot model). O(slots) with a name/icon resolve per
+-- material; runs once per button press, never on the scan path.
+function Valuation.CaptureSnapshot()
+    local sv = private.savedVars
+    if not sv then
+        return
+    end
+
+    local materials = {}
+    for slotIndex, info in pairs(slotInfo) do
+        local existing = materials[info.itemId]
+        if existing then
+            -- Same material in a second slot: fold its quantity/value in.
+            existing.count = existing.count + info.stack
+            existing.gold = existing.gold + info.value
+            existing.unitPrice = existing.count > 0 and (existing.gold / existing.count) or 0
+        else
+            local itemLink = GetItemLink(BAG, slotIndex)
+            local unitPrice = info.stack > 0 and (info.value / info.stack) or 0
+            materials[info.itemId] = {
+                -- Store the language-independent link so the diff view can
+                -- re-resolve the name into the current game language; keep the
+                -- resolved name too as a fallback for the row builders.
+                link = itemLink,
+                name = GetDisplayName(info.itemId, itemLink),
+                icon = GetItemLinkIcon(itemLink),
+                quality = GetItemLinkFunctionalQuality(itemLink),
+                count = info.stack,
+                gold = info.value,
+                unitPrice = unitPrice,
+                priced = info.priced,
+            }
+        end
+    end
+
+    sv.snapshot = {
+        t = GetTimeStamp(),
+        gold = grandGold,
+        items = grandItems,
+        slots = grandSlots,
+        materials = materials,
+    }
+
+    -- Returned so the caller (the manual "Remember" button) can report what was
+    -- captured in chat; the silent auto-snapshot path ignores the return value.
+    return sv.snapshot
+end
+
+-- Whether a snapshot exists to diff against. Used by the window to pick between
+-- the diff list and the "no snapshot yet" empty state.
+function Valuation.HasSnapshot()
+    local sv = private.savedVars
+    return sv ~= nil and sv.snapshot ~= nil
+end
+
+-- Forget the saved snapshot (the detail window's "Clear" button). The single-
+-- snapshot model means there is nothing else to fall back to, so the diff view
+-- reverts to its "press Remember" empty state until a new snapshot is taken.
+function Valuation.ClearSnapshot()
+    local sv = private.savedVars
+    if sv then
+        sv.snapshot = nil
+    end
+end
+
+-- Header info for the diff title (the relative-time label is built by the
+-- window). Returns nil when no snapshot exists.
+function Valuation.GetSnapshotInfo()
+    local sv = private.savedVars
+    local snap = sv and sv.snapshot
+    if not snap then
+        return nil
+    end
+    return { t = snap.t, gold = snap.gold, items = snap.items, slots = snap.slots }
+end
+
+-- Per-material diff rows comparing the live bag against the snapshot. Walks the
+-- union of snapshot materials and current materials (both keyed by itemId) and
+-- classifies each:
+--   added    (current only)         countDelta = +count,  status "new"
+--   removed  (snapshot only)        countDelta = -count,  status "gone"
+--   increased (both, count went up)  countDelta > 0,       status "added"
+--   decreased (both, count went down) countDelta < 0,      status "reduced"
+--   count unchanged                 skipped
+-- The gold delta is the QUANTITY change valued at one unit price (the current
+-- unit price when available, else the snapshot's). Pure price drift (same count,
+-- reimported prices) is intentionally excluded by the count-unchanged skip, so
+-- the diff never shows a movement the player did not make - the same gating the
+-- footer delta uses. Returns an array of row records; empty when nothing changed
+-- or no snapshot exists. Sorting is left to the caller.
+--   { itemId, name, icon, quality, diff = true, countDelta, goldDelta, priced,
+--     status }  -- status is one of "new" / "gone" / "changed"
+function Valuation.GetDiffMaterials()
+    local sv = private.savedVars
+    local snap = sv and sv.snapshot
+    if not snap then
+        return {}
+    end
+
+    local snapMats = snap.materials or {}
+    local current = AggregateCurrentByItemId()
+    local rows = {}
+
+    -- Materials present now: added or changed (or unchanged, which we skip).
+    for itemId, cur in pairs(current) do
+        local old = snapMats[itemId]
+        if not old then
+            -- Added since the snapshot.
+            local itemLink = GetItemLink(BAG, cur.slotIndex)
+            rows[#rows + 1] = {
+                itemId = itemId,
+                name = GetDisplayName(itemId, itemLink),
+                icon = GetItemLinkIcon(itemLink),
+                quality = GetItemLinkFunctionalQuality(itemLink),
+                diff = true,
+                countDelta = cur.count,
+                goldDelta = cur.unitPrice * cur.count,
+                priced = cur.priced,
+                status = "new",
+            }
+        elseif cur.count ~= old.count then
+            -- Quantity changed; value the delta at the current unit price. Split
+            -- the status by direction so the column reads "added"/"reduced", not a
+            -- single ambiguous "changed" (the sign is otherwise only in the Qty
+            -- column).
+            local countDelta = cur.count - old.count
+            rows[#rows + 1] = {
+                itemId = itemId,
+                name = SnapshotMaterialName(old),
+                icon = old.icon,
+                quality = old.quality,
+                diff = true,
+                countDelta = countDelta,
+                goldDelta = cur.unitPrice * countDelta,
+                priced = cur.priced,
+                status = countDelta > 0 and "added" or "reduced",
+            }
+        end
+        -- cur.count == old.count: unchanged, skipped (excludes price drift).
+    end
+
+    -- Materials in the snapshot but no longer present: removed.
+    for itemId, old in pairs(snapMats) do
+        if not current[itemId] then
+            rows[#rows + 1] = {
+                itemId = itemId,
+                name = SnapshotMaterialName(old),
+                icon = old.icon,
+                quality = old.quality,
+                diff = true,
+                countDelta = -old.count,
+                goldDelta = -(old.unitPrice * old.count),
+                priced = old.priced,
+                status = "gone",
+            }
+        end
+    end
+
+    return rows
+end
+
+
+-- names. Kept here (next to the data) so the window can render a plain string.
+function Valuation.ColorizeMaterialName(name, quality)
+    if not quality then
+        return name
+    end
+    local color = GetItemQualityColor(quality)
+    if not color then
+        return name
+    end
+    return color:Colorize(name)
+end
+
+-- Drop price-history baselines for materials not seen in PRUNE_MAX_AGE_SECONDS so
+-- the table cannot grow without bound. Called once on load.
+function Valuation.PrunePriceHistory()
+    local sv = private.savedVars
+    if not sv or not sv.priceHistory then
+        return
+    end
+
+    local now = GetTimeStamp()
+    for itemId, entry in pairs(sv.priceHistory) do
+        if not entry.t or (now - entry.t) >= PRUNE_MAX_AGE_SECONDS then
+            sv.priceHistory[itemId] = nil
+        end
+    end
+end
+
+private.GetValuationSnapshot = Valuation.GetSnapshot
