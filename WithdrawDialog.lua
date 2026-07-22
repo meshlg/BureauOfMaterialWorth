@@ -301,9 +301,6 @@ local function IssueJob(job, reserved, watchItemIds)
 
     watchItemIds[job.itemId] = true
     SecureRequestMoveItem(BAG, job.slotIndex, BAG_BACKPACK, destSlot, moveQty)
-    if LogDebug then
-        LogDebug(SI_BMW_LOG_SLOT_UPDATED, destSlot, ZO_LocalizeDecimalNumber(moveQty))
-    end
     return moveQty
 end
 

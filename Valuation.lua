@@ -36,6 +36,9 @@ local zo_strformat                = zo_strformat
 local tablesort                   = table.sort
 local stringlower                 = string.lower
 local stringfind                  = string.find
+local stringformat                = string.format
+local stringmatch                 = string.match
+local tonumber                    = tonumber
 
 local BAG = BAG_VIRTUAL
 
@@ -72,6 +75,165 @@ local PRUNE_MAX_AGE_SECONDS   = 30 * 24 * 60 * 60  -- 30 days
 -- rather than filling with points minutes apart.
 local VALUE_HISTORY_CAPACITY     = 90
 local VALUE_HISTORY_MIN_INTERVAL = 4 * 60 * 60  -- ~4h
+
+-- SavedVariables are serialized as verbose Lua tables: one material with four
+-- named fields consumes six or more lines. The Craft Bag commonly holds several
+-- hundred materials, so the manual snapshot, visit baseline, and price history
+-- used to dominate the save file. Compact entries retain the same data in one
+-- string. Tilde cannot occur in ESO item links, remains readable in the saved
+-- file, and %.17g round-trips Lua numbers without intentionally reducing price
+-- precision.
+local SAVE_SEPARATOR = "~"
+
+local function EncodeNumber(value)
+    return stringformat("%.17g", value or 0)
+end
+
+local function EncodeSnapshotMaterial(entry)
+    return table.concat({
+        EncodeNumber(entry.count),
+        EncodeNumber(entry.unitPrice),
+        entry.priced and "1" or "0",
+        entry.link or "",
+    }, SAVE_SEPARATOR)
+end
+
+local function DecodeSnapshotMaterial(entry)
+    if type(entry) ~= "string" then
+        return entry or {}
+    end
+    local count, unitPrice, priced, link = stringmatch(entry,
+        "^([^" .. SAVE_SEPARATOR .. "]*)" .. SAVE_SEPARATOR
+        .. "([^" .. SAVE_SEPARATOR .. "]*)" .. SAVE_SEPARATOR
+        .. "([^" .. SAVE_SEPARATOR .. "]*)" .. SAVE_SEPARATOR .. "(.*)$")
+    return {
+        count = tonumber(count) or 0,
+        unitPrice = tonumber(unitPrice) or 0,
+        priced = priced == "1",
+        link = link or "",
+    }
+end
+
+local function EncodeVisitMaterial(entry)
+    return EncodeNumber(entry.count) .. SAVE_SEPARATOR .. EncodeNumber(entry.unitPrice)
+end
+
+local function DecodeVisitMaterial(entry)
+    if type(entry) ~= "string" then
+        return entry or {}
+    end
+    local count, unitPrice = stringmatch(entry,
+        "^([^" .. SAVE_SEPARATOR .. "]*)" .. SAVE_SEPARATOR .. "(.*)$")
+    return { count = tonumber(count) or 0, unitPrice = tonumber(unitPrice) or 0 }
+end
+
+local function EncodePriceHistoryEntry(price, stamp)
+    return EncodeNumber(price) .. SAVE_SEPARATOR .. EncodeNumber(stamp)
+end
+
+local function DecodePriceHistoryEntry(entry)
+    if type(entry) ~= "string" then
+        return entry or {}
+    end
+    local price, stamp = stringmatch(entry,
+        "^([^" .. SAVE_SEPARATOR .. "]*)" .. SAVE_SEPARATOR .. "(.*)$")
+    return { p = tonumber(price) or 0, t = tonumber(stamp) or 0 }
+end
+
+local function EncodeVisitDiffRow(row)
+    return table.concat({
+        EncodeNumber(row.itemId),
+        EncodeNumber(row.countDelta),
+        EncodeNumber(row.goldDelta),
+        row.priced and "1" or "0",
+        row.status or "",
+        row.link or "",
+    }, SAVE_SEPARATOR)
+end
+
+local function DecodeVisitDiffRow(row)
+    if type(row) ~= "string" then
+        return row or {}
+    end
+    local itemId, countDelta, goldDelta, priced, status, link = stringmatch(row,
+        "^([^" .. SAVE_SEPARATOR .. "]*)" .. SAVE_SEPARATOR
+        .. "([^" .. SAVE_SEPARATOR .. "]*)" .. SAVE_SEPARATOR
+        .. "([^" .. SAVE_SEPARATOR .. "]*)" .. SAVE_SEPARATOR
+        .. "([^" .. SAVE_SEPARATOR .. "]*)" .. SAVE_SEPARATOR
+        .. "([^" .. SAVE_SEPARATOR .. "]*)" .. SAVE_SEPARATOR .. "(.*)$")
+    return {
+        itemId = tonumber(itemId) or 0,
+        countDelta = tonumber(countDelta) or 0,
+        goldDelta = tonumber(goldDelta) or 0,
+        priced = priced == "1",
+        status = status or "",
+        link = link or "",
+    }
+end
+
+local function CompressVisitBaseline(baseline)
+    local compact = { gold = baseline.gold, items = baseline.items, materials = {} }
+    for itemId, entry in pairs(baseline.materials or {}) do
+        compact.materials[itemId] = EncodeVisitMaterial(entry)
+    end
+    return compact
+end
+
+local function CompressVisitDetails(details)
+    if not details then
+        return nil
+    end
+    local compact = {
+        t = details.t,
+        totalGold = details.totalGold,
+        quantityGold = details.quantityGold,
+        priceGold = details.priceGold,
+        hasQuantityChange = details.hasQuantityChange,
+        rows = {},
+    }
+    for index, row in ipairs(details.rows or {}) do
+        compact.rows[index] = EncodeVisitDiffRow(row)
+    end
+    return compact
+end
+
+-- Migrate once in memory. ESO writes SavedVariables on logout/reload, so this
+-- safely compacts existing saves without asking the user to delete anything.
+local function CompactSavedVariables()
+    local sv = private.savedVars
+    if not sv then
+        return
+    end
+
+    for itemId, entry in pairs(sv.priceHistory or {}) do
+        if type(entry) == "table" then
+            sv.priceHistory[itemId] = EncodePriceHistoryEntry(entry.p, entry.t)
+        end
+    end
+
+    local snapshot = sv.snapshot
+    for itemId, entry in pairs(snapshot and snapshot.materials or {}) do
+        if type(entry) == "table" then
+            snapshot.materials[itemId] = EncodeSnapshotMaterial(entry)
+        end
+    end
+
+    local baseline = sv.lastVisitBaseline
+    if baseline and baseline.materials then
+        for itemId, entry in pairs(baseline.materials) do
+            if type(entry) == "table" then
+                baseline.materials[itemId] = EncodeVisitMaterial(entry)
+            end
+        end
+    end
+
+    local details = sv.lastVisitDetails
+    for index, row in ipairs(details and details.rows or {}) do
+        if type(row) == "table" then
+            details.rows[index] = EncodeVisitDiffRow(row)
+        end
+    end
+end
 
 
 local zo_ceil = zo_ceil
@@ -275,6 +437,7 @@ local grandUnpricedSlots = 0
 local deltaSinceLastVisit = nil
 local sessionBaseGold = nil   -- session-mode baseline: gold at first open this session
 local sessionBaseItems = nil  -- session-mode baseline: item count alongside it
+local sessionBaseline = nil   -- full composition of the first session visit, for its delta breakdown
 local visitNotified = false   -- emitted the "since last visit" chat line yet this session?
 local visitFinalizePending = false  -- an open is waiting to finalize its delta/history once prices settle
 -- Forward-declared: StartPriceRetry (defined above FinalizeVisit) calls it from
@@ -326,6 +489,112 @@ local function RecordValuePoint()
     local nextHead = (hist.head % VALUE_HISTORY_CAPACITY) + 1
     hist.entries[nextHead] = { t = now, gold = grandGold, items = grandItems }
     hist.head = nextHead
+end
+
+-- Capture only the data needed to explain the next visit delta. This is a
+-- single rolling baseline, distinct from the user-owned snapshot: it is
+-- replaced after every visit and therefore stays bounded by Craft Bag slots.
+local function CaptureVisitBaseline()
+    local materials = {}
+    for slotIndex, info in pairs(slotInfo) do
+        local existing = materials[info.itemId]
+        local unitPrice = info.stack > 0 and (info.value / info.stack) or 0
+        if existing then
+            local combinedCount = existing.count + info.stack
+            existing.unitPrice = combinedCount > 0
+                and ((existing.unitPrice * existing.count + info.value) / combinedCount) or 0
+            existing.count = combinedCount
+            existing.priced = existing.priced or info.priced
+        else
+            materials[info.itemId] = {
+                link = GetItemLink(BAG, slotIndex),
+                count = info.stack,
+                unitPrice = unitPrice,
+                priced = info.priced,
+            }
+        end
+    end
+
+    return { gold = grandGold, items = grandItems, materials = materials }
+end
+
+-- Split a total value change into two exact, additive effects:
+--   quantity: the stock change valued at the previous visit's unit price;
+--   prices:   the remaining revaluation of the materials still held now.
+-- The rows deliberately contain only quantity changes, so the existing diff
+-- table remains useful for answering "what did I add or spend?" while the
+-- price figure is shown separately in the visit-delta tooltip.
+local function BuildVisitDeltaDetails(baseline)
+    if not baseline then
+        return nil
+    end
+
+    local current = CaptureVisitBaseline()
+    local oldMaterials = baseline.materials or {}
+    local rows = {}
+    local quantityGold, priceGold = 0, 0
+    local hasQuantityChange = false
+
+    for itemId, cur in pairs(current.materials) do
+        local storedOld = oldMaterials[itemId]
+        local old = storedOld and DecodeVisitMaterial(storedOld) or nil
+        if not old then
+            local quantityDelta = cur.count * cur.unitPrice
+            quantityGold = quantityGold + quantityDelta
+            hasQuantityChange = true
+            rows[#rows + 1] = {
+                itemId = itemId,
+                link = cur.link,
+                countDelta = cur.count,
+                goldDelta = quantityDelta,
+                priced = cur.priced,
+                status = "new",
+            }
+        else
+            local countDelta = cur.count - old.count
+            local quantityDelta = countDelta * (old.unitPrice or 0)
+            local revaluation = (cur.unitPrice - (old.unitPrice or 0)) * cur.count
+            quantityGold = quantityGold + quantityDelta
+            priceGold = priceGold + revaluation
+            if countDelta ~= 0 then
+                hasQuantityChange = true
+                rows[#rows + 1] = {
+                    itemId = itemId,
+                    link = old.link or cur.link,
+                    countDelta = countDelta,
+                    goldDelta = quantityDelta,
+                    priced = cur.priced or old.priced,
+                    status = countDelta > 0 and "added" or "reduced",
+                }
+            end
+        end
+    end
+
+    for itemId, storedOld in pairs(oldMaterials) do
+        local old = DecodeVisitMaterial(storedOld)
+        if not current.materials[itemId] then
+            local quantityDelta = -old.count * (old.unitPrice or 0)
+            quantityGold = quantityGold + quantityDelta
+            hasQuantityChange = true
+            rows[#rows + 1] = {
+                itemId = itemId,
+                link = old.link,
+                countDelta = -old.count,
+                goldDelta = quantityDelta,
+                priced = old.priced,
+                status = "gone",
+            }
+        end
+    end
+
+    return {
+        t = GetTimeStamp(),
+        totalGold = current.gold - (baseline.gold or 0),
+        quantityGold = quantityGold,
+        priceGold = priceGold,
+        rows = rows,
+        hasQuantityChange = hasQuantityChange,
+    }, current
 end
 
 
@@ -534,7 +803,7 @@ local function FullRescan()
     lastInventoryUpdateMs = GetGameTimeMilliseconds()
     isDirty = false
     UpdatePriceHistoryBaselines()
-    LogInfo(SI_BMW_LOG_RESCAN_DONE, scanned, ZO_LocalizeDecimalNumber(zo_round(grandGold)))
+    LogInfo(SI_BMW_LOG_RESCAN_DONE, scanned, private.FormatGold(grandGold))
 end
 
 local function RefreshWindow()
@@ -682,7 +951,7 @@ local function OnSingleSlotUpdate(eventCode, bagId, slotIndex, isNewItem, soundC
     AddSlotToAggregates(slotIndex, info)
     lastInventoryUpdateMs = GetGameTimeMilliseconds()
     UpdatePriceHistoryBaselines()
-    LogDebug(SI_BMW_LOG_SLOT_UPDATED, slotIndex, ZO_LocalizeDecimalNumber(zo_round(info and info.value or 0)))
+    LogDebug(SI_BMW_LOG_SLOT_UPDATED, slotIndex, private.FormatGold(info and info.value or 0))
 
     QueueWindowRefresh()
 end
@@ -704,6 +973,9 @@ end
 
 function Valuation.Initialize()
     BuildItemTypeMap()
+
+    -- Compact legacy table-shaped entries before normal reads/writes begin.
+    CompactSavedVariables()
 
     -- Drop stale price-history baselines accumulated across past sessions.
     Valuation.PrunePriceHistory()
@@ -738,6 +1010,7 @@ function FinalizeVisit()
 
     local sv = private.savedVars
     local comparisonGold = nil
+    local visitDetails, currentBaseline
 
     -- "Since last visit" delta, computed once per open so incremental updates
     -- during the visit don't move it under the user. The baseline depends on the
@@ -752,12 +1025,14 @@ function FinalizeVisit()
         comparisonGold = sessionBaseGold
         if sessionBaseGold ~= nil and sessionBaseItems ~= nil and sessionBaseItems ~= grandItems then
             deltaSinceLastVisit = grandGold - sessionBaseGold
+            visitDetails = BuildVisitDeltaDetails(sessionBaseline)
         else
             deltaSinceLastVisit = nil
         end
         if sessionBaseGold == nil then
             sessionBaseGold = grandGold
             sessionBaseItems = grandItems
+            sessionBaseline = CaptureVisitBaseline()
         end
     elseif sv then
         -- Visit mode: compare against the previous open, then advance the
@@ -767,13 +1042,22 @@ function FinalizeVisit()
         comparisonGold = previousGold
         if previousGold ~= nil and previousItems ~= nil and previousItems ~= grandItems then
             deltaSinceLastVisit = grandGold - previousGold
+            visitDetails, currentBaseline = BuildVisitDeltaDetails(sv.lastVisitBaseline)
         else
             deltaSinceLastVisit = nil
         end
         sv.lastVisitGold = grandGold
         sv.lastVisitItems = grandItems
+        sv.lastVisitBaseline = CompressVisitBaseline(currentBaseline or CaptureVisitBaseline())
     else
         deltaSinceLastVisit = nil
+    end
+
+    if sv then
+        -- A legacy baseline contains totals only, so it can still yield the
+        -- familiar aggregate delta but not a material/price split until this
+        -- version has captured one full visit baseline.
+        sv.lastVisitDetails = CompressVisitDetails(visitDetails)
     end
 
     -- Summary/detailed modes retain the first-open session digest. Important
@@ -782,20 +1066,20 @@ function FinalizeVisit()
     local notificationMode = GetNotificationMode()
     if (notificationMode == "summary" or notificationMode == "detailed") and not visitNotified then
         visitNotified = true
-        local total = ZO_LocalizeDecimalNumber(zo_round(grandGold))
+        local total = private.FormatGold(grandGold)
         if deltaSinceLastVisit and deltaSinceLastVisit ~= 0 then
             local sign = deltaSinceLastVisit > 0 and "+" or "-"
-            local magnitude = ZO_LocalizeDecimalNumber(zo_round(mathabs(deltaSinceLastVisit)))
-            ChatInfo(SI_BMW_MSG_VISIT_DELTA, total, sign, magnitude)
+            local magnitude = sign .. private.FormatGold(mathabs(deltaSinceLastVisit))
+            ChatInfo(SI_BMW_MSG_VISIT_DELTA, total, magnitude)
         else
             ChatInfo(SI_BMW_MSG_VISIT_TOTAL, total)
         end
     elseif notificationMode == "important" and deltaSinceLastVisit and comparisonGold
         and comparisonGold > 0 and mathabs(deltaSinceLastVisit) >= comparisonGold * 0.01 then
         local sign = deltaSinceLastVisit > 0 and "+" or "-"
-        local magnitude = ZO_LocalizeDecimalNumber(zo_round(mathabs(deltaSinceLastVisit)))
+        local magnitude = sign .. private.FormatGold(mathabs(deltaSinceLastVisit))
         local percent = zo_round(mathabs(deltaSinceLastVisit) / comparisonGold * 100)
-        ChatInfo(SI_BMW_MSG_SIGNIFICANT_DELTA, sign, magnitude, percent)
+        ChatInfo(SI_BMW_MSG_SIGNIFICANT_DELTA, magnitude, percent)
     end
 
     RecordValuePoint()
@@ -1064,7 +1348,8 @@ local function ResolvePriceGrowth(itemId, curUnit)
         return cached.growthPercent, cached.growthDir, cached.isNew
     end
 
-    local old = sv.priceHistory and sv.priceHistory[itemId]
+    local storedOld = sv.priceHistory and sv.priceHistory[itemId]
+    local old = storedOld and DecodePriceHistoryEntry(storedOld) or nil
 
     local growthPercent, growthDir, isNew
     if old and old.p and old.p > 0 then
@@ -1103,7 +1388,8 @@ UpdatePriceHistoryBaselines = function()
     for _, info in pairs(slotInfo) do
         if lookupItemIds[info.itemId] and info.priced and info.stack and info.stack > 0 then
             local unitPrice = info.value / info.stack
-            local old = history[info.itemId]
+            local storedOld = history[info.itemId]
+            local old = storedOld and DecodePriceHistoryEntry(storedOld) or nil
             local growthPercent, growthDir, isNew
             if old and old.p and old.p > 0 then
                 growthPercent = (unitPrice - old.p) / old.p * 100
@@ -1120,7 +1406,7 @@ UpdatePriceHistoryBaselines = function()
             }
 
             if not old or not old.t or (now - old.t) >= RECORD_INTERVAL_SECONDS then
-                history[info.itemId] = { p = zo_round(unitPrice), t = now }
+                history[info.itemId] = EncodePriceHistoryEntry(zo_round(unitPrice), now)
             end
         end
     end
@@ -1331,8 +1617,9 @@ function Valuation.CaptureSnapshot()
 
     -- `gold` is needed only while combining duplicate slots. The persisted diff
     -- reconstructs it from count and unitPrice.
-    for _, entry in pairs(materials) do
+    for itemId, entry in pairs(materials) do
         entry.gold = nil
+        materials[itemId] = EncodeSnapshotMaterial(entry)
     end
 
     sv.snapshot = {
@@ -1405,7 +1692,8 @@ function Valuation.GetDiffMaterials()
 
     -- Materials present now: added or changed (or unchanged, which we skip).
     for itemId, cur in pairs(current) do
-        local old = snapMats[itemId]
+        local storedOld = snapMats[itemId]
+        local old = storedOld and DecodeSnapshotMaterial(storedOld) or nil
         if not old then
             -- Added since the snapshot.
             local itemLink = GetItemLink(BAG, cur.slotIndex)
@@ -1443,7 +1731,8 @@ function Valuation.GetDiffMaterials()
     end
 
     -- Materials in the snapshot but no longer present: removed.
-    for itemId, old in pairs(snapMats) do
+    for itemId, storedOld in pairs(snapMats) do
+        local old = DecodeSnapshotMaterial(storedOld)
         if not current[itemId] then
             local icon, quality = SnapshotMaterialVisuals(old)
             rows[#rows + 1] = {
@@ -1460,6 +1749,42 @@ function Valuation.GetDiffMaterials()
         end
     end
 
+    return rows
+end
+
+-- The most recent visit/session delta is retained as a single diagnostic record.
+-- It is not a second history: the next finalized comparison replaces it.
+function Valuation.GetLastVisitDeltaDetails()
+    local sv = private.savedVars
+    return sv and sv.lastVisitDetails or nil
+end
+
+-- Quantity-only rows for the latest visit delta. The total delta's separate
+-- price component belongs in the detail view's context line/tooltip; the rows
+-- answer the complementary question of which materials actually moved.
+function Valuation.GetLastVisitDiffMaterials()
+    local details = Valuation.GetLastVisitDeltaDetails()
+    if not details or not details.rows then
+        return {}
+    end
+
+    local rows = {}
+    for index = 1, #details.rows do
+        local entry = DecodeVisitDiffRow(details.rows[index])
+        local material = { link = entry.link }
+        local icon, quality = SnapshotMaterialVisuals(material)
+        rows[#rows + 1] = {
+            itemId = entry.itemId,
+            name = SnapshotMaterialName(material) or tostring(entry.itemId),
+            icon = icon,
+            quality = quality,
+            diff = true,
+            countDelta = entry.countDelta,
+            goldDelta = entry.goldDelta,
+            priced = entry.priced,
+            status = entry.status,
+        }
+    end
     return rows
 end
 
@@ -1485,7 +1810,8 @@ function Valuation.PrunePriceHistory()
     end
 
     local now = GetTimeStamp()
-    for itemId, entry in pairs(sv.priceHistory) do
+    for itemId, storedEntry in pairs(sv.priceHistory) do
+        local entry = DecodePriceHistoryEntry(storedEntry)
         if not entry.t or (now - entry.t) >= PRUNE_MAX_AGE_SECONDS then
             sv.priceHistory[itemId] = nil
         end

@@ -25,7 +25,7 @@ local tonumber = tonumber
 --   showInGuildStore      show the panel while the guild store is open (shifted clear of the store UI)
 --   lastVisitGold         grand total saved on last bag close, for the "since last visit" delta
 --   lastVisitItems        total item count saved alongside it, to gate the delta on real stock changes
---   priceHistory          [itemId] = { p = unit price, t = unix timestamp }; baseline for the detail window's price-change column
+--   priceHistory          [itemId] = compact "unit price~unix timestamp" baseline for the detail window's price-change column
 --   showValueHistory      draw the grand-total sparkline (Craft Bag value over time) in the footer
 --   showProfile           show the @account handle + character name on the panel's title line
 --   notificationMode      "off", "summary", "important", or "detailed" chat notification mode
@@ -33,9 +33,8 @@ local tonumber = tonumber
 --                         entries = { { t = unix, gold, items }, ... } }. See Valuation's
 --                         RecordValuePoint/GetValueHistory for the wrap-around bookkeeping.
 --   snapshot              manual single snapshot of bag composition for the detail window's
---                         diff view; nil until "Remember" is pressed (then overwritten). Shape:
---                         { t, gold, items, slots, materials = { [itemId] = { link, count,
---                         unitPrice, priced } } }. See Valuation's CaptureSnapshot/GetDiffMaterials.
+--                         diff view; nil until "Remember" is pressed (then overwritten). Material
+--                         entries are compact strings decoded by Valuation's CaptureSnapshot/GetDiffMaterials.
 local DEFAULT_SAVED_VARS = {
     debugMode = 1,
     showCategoryBreakdown = true,

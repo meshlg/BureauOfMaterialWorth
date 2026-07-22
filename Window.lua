@@ -44,6 +44,7 @@ local ROW_HEIGHT     = 22
 local DIVIDER_GAP    = 10   -- vertical space a divider occupies
 local FOOTER_LINE    = 16
 local SECTION_GAP    = 6    -- small gap between blocks
+local SPARK_TOP_GAP  = 30   -- breathing room between footer guidance and history caption
 local VERSION_GAP    = FOOTER_LINE + SECTION_GAP
 local HEADER_TO_DIVIDER_GAP = 12
 local FOOTER_ALPHA   = 0.82
@@ -377,13 +378,13 @@ local function AcquireRow(index)
             ZO_NORMAL_TEXT:UnpackRGB())
         ZO_Tooltip_AddDivider(InformationTooltip)
         InformationTooltip:AddLine(stringformat(GetString(SI_BMW_TOOLTIP_VALUE),
-            ZO_LocalizeDecimalNumber(zo_round(data.gold))), "ZoFontGame", 1, 0.82, 0.25)
+            FormatGold(data.gold)), "ZoFontGame", 1, 0.82, 0.25)
         -- Net if sold through a guild trader (after the 1% + 7% fees). Only shown
         -- when there's a value to net down; the muted green marks it as the
         -- take-home figure, matching the grand-total hover.
         if data.gold and data.gold > 0 then
             InformationTooltip:AddLine(stringformat(GetString(SI_BMW_TOOLTIP_NET),
-                ZO_LocalizeDecimalNumber(zo_round(private.NetAfterFees(data.gold)))),
+                FormatGold(private.NetAfterFees(data.gold))),
                 "ZoFontGame", 0.44, 0.80, 0.62)
         end
         InformationTooltip:AddLine(stringformat(GetString(SI_BMW_TOOLTIP_SLOTS),
@@ -493,14 +494,14 @@ function Window.Initialize()
         ZO_Tooltip_AddDivider(InformationTooltip)
         -- Gross (list price), then each fee as a negative, then the net.
         InformationTooltip:AddLine(stringformat(GetString(SI_BMW_NET_TOOLTIP_GROSS),
-            ZO_LocalizeDecimalNumber(zo_round(gross))), "ZoFontGame", 0.86, 0.85, 0.78)
+            FormatGold(gross)), "ZoFontGame", 0.86, 0.85, 0.78)
         InformationTooltip:AddLine(stringformat(GetString(SI_BMW_NET_TOOLTIP_LISTING),
-            ZO_LocalizeDecimalNumber(zo_round(listing))), "ZoFontGame", 0.82, 0.56, 0.37)
+            FormatGold(listing)), "ZoFontGame", 0.82, 0.56, 0.37)
         InformationTooltip:AddLine(stringformat(GetString(SI_BMW_NET_TOOLTIP_SALES),
-            ZO_LocalizeDecimalNumber(zo_round(sales))), "ZoFontGame", 0.82, 0.56, 0.37)
+            FormatGold(sales)), "ZoFontGame", 0.82, 0.56, 0.37)
         ZO_Tooltip_AddDivider(InformationTooltip)
         InformationTooltip:AddLine(stringformat(GetString(SI_BMW_NET_TOOLTIP_NET),
-            ZO_LocalizeDecimalNumber(zo_round(net))), "ZoFontGame", 0.44, 0.80, 0.62)
+            FormatGold(net)), "ZoFontGame", 0.44, 0.80, 0.62)
     end)
     totalLabel:SetHandler("OnMouseExit", function()
         ClearTooltip(InformationTooltip)
@@ -560,6 +561,49 @@ function Window.Initialize()
         ClearTooltip(InformationTooltip)
     end)
 
+    -- The existing visit-delta row doubles as the entry point to its explanation:
+    -- hover separates material movement from price revaluation; click opens the
+    -- normal detail window with the material movements, not a new UI surface.
+    footerDeltaRow.container:SetMouseEnabled(true)
+    footerDeltaRow.container:SetHandler("OnMouseUp", function(_, button, upInside)
+        if button ~= MOUSE_BUTTON_INDEX_LEFT or not upInside then
+            return
+        end
+        local detail = addon.DetailWindow
+        local valuation = addon.Valuation
+        if detail and detail.ShowVisitDiff and valuation and valuation.GetLastVisitDeltaDetails
+            and valuation.GetLastVisitDeltaDetails() then
+            detail.ShowVisitDiff()
+        end
+    end)
+    footerDeltaRow.container:SetHandler("OnMouseEnter", function(self)
+        local valuation = addon.Valuation
+        local details = valuation and valuation.GetLastVisitDeltaDetails
+            and valuation.GetLastVisitDeltaDetails() or nil
+        if not details then
+            return
+        end
+        InitializeTooltip(InformationTooltip, self, TOPRIGHT, -6, 0, BOTTOMRIGHT)
+        InformationTooltip:AddLine(GetString(SI_BMW_FOOTER_DELTA_TOOLTIP_TITLE), "ZoFontHeader2",
+            ZO_NORMAL_TEXT:UnpackRGB())
+        ZO_Tooltip_AddDivider(InformationTooltip)
+        local function SignedAmount(value)
+            local sign = value >= 0 and "+" or "-"
+            return sign .. FormatGold(mathabs(value))
+        end
+        InformationTooltip:AddLine(stringformat(GetString(SI_BMW_FOOTER_DELTA_TOOLTIP_STOCK),
+            SignedAmount(details.quantityGold or 0)),
+            "ZoFontGame", 0.86, 0.85, 0.78)
+        InformationTooltip:AddLine(stringformat(GetString(SI_BMW_FOOTER_DELTA_TOOLTIP_PRICES),
+            SignedAmount(details.priceGold or 0)),
+            "ZoFontGame", 0.86, 0.85, 0.78)
+        InformationTooltip:AddLine(GetString(SI_BMW_FOOTER_DELTA_TOOLTIP_CLICK),
+            "ZoFontGame", 0.82, 0.56, 0.37)
+    end)
+    footerDeltaRow.container:SetHandler("OnMouseExit", function()
+        ClearTooltip(InformationTooltip)
+    end)
+
     footerGuidanceRow.container:SetHandler("OnMouseUp", function(_, button, upInside)
         if button == MOUSE_BUTTON_INDEX_LEFT and upInside and footerGuidanceRow.action then
             footerGuidanceRow.action()
@@ -580,12 +624,14 @@ function Window.Initialize()
     sparkCaption:SetFont("ZoFontGameSmall")
     sparkCaption:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
     sparkCaption:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+    sparkCaption:SetHeight(FOOTER_LINE)
 
     -- Current value + trend arrow, right-aligned to sit opposite the caption.
     sparkHeadLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_SparkHead", windowControl, CT_LABEL)
     sparkHeadLabel:SetFont("ZoFontGameSmall")
     sparkHeadLabel:SetHorizontalAlignment(TEXT_ALIGN_RIGHT)
     sparkHeadLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+    sparkHeadLabel:SetHeight(FOOTER_LINE)
 
     sparkContainer = WINDOW_MANAGER:CreateControl(addon.name .. "_SparkStrip", windowControl, CT_CONTROL)
     sparkContainer:SetHeight(SPARK_HEIGHT)
@@ -614,9 +660,9 @@ function Window.Initialize()
         InformationTooltip:AddLine(stringformat(GetString(SI_BMW_HISTORY_TOOLTIP_POINTS), #points),
             "ZoFontGame", 0.86, 0.85, 0.78)
         InformationTooltip:AddLine(stringformat(GetString(SI_BMW_HISTORY_TOOLTIP_OLDEST),
-            ZO_LocalizeDecimalNumber(zo_round(first.gold or 0))), "ZoFontGame", 0.86, 0.85, 0.78)
+            FormatGold(first.gold or 0)), "ZoFontGame", 0.86, 0.85, 0.78)
         InformationTooltip:AddLine(stringformat(GetString(SI_BMW_HISTORY_TOOLTIP_NEWEST),
-            ZO_LocalizeDecimalNumber(zo_round(last.gold or 0))), "ZoFontGame", 1, 0.82, 0.25)
+            FormatGold(last.gold or 0)), "ZoFontGame", 1, 0.82, 0.25)
         -- Net change across the recorded window, colored by direction.
         local change = (last.gold or 0) - (first.gold or 0)
         local r, g, b = 0.55, 0.79, 0.62
@@ -624,7 +670,7 @@ function Window.Initialize()
             r, g, b = 0.82, 0.54, 0.54
         end
         InformationTooltip:AddLine(stringformat(GetString(SI_BMW_HISTORY_TOOLTIP_CHANGE),
-            ZO_LocalizeDecimalNumber(zo_round(change))), "ZoFontGame", r, g, b)
+            FormatGold(change)), "ZoFontGame", r, g, b)
     end)
     sparkContainer:SetHandler("OnMouseExit", function()
         ClearTooltip(InformationTooltip)
@@ -696,7 +742,8 @@ local function RenderFooter()
         -- The arrow texture carries the direction; the number is colored, the
         -- texture left outside Colorize since textures aren't tinted.
         footerDeltaRow.value:SetText(arrow .. " " .. Colorize(color,
-            stringformat(GetString(SI_BMW_FOOTER_DELTA_VALUE), magnitude)))
+            stringformat(GetString(SI_BMW_FOOTER_DELTA_VALUE),
+                ZO_LocalizeDecimalNumber(magnitude) .. " " .. GOLD_ICON)))
     else
         footerDeltaRow.container:SetHidden(true)
     end
@@ -763,8 +810,8 @@ local function RenderGuidance(snapshot)
             if diffGold ~= 0 then
                 local sign = diffGold > 0 and "+" or "-"
                 row.label:SetText(Colorize(COLOR_ACCENT,
-                    stringformat(GetString(SI_BMW_FOOTER_GUIDANCE_CHANGES), sign,
-                    ZO_LocalizeDecimalNumber(zo_round(mathabs(diffGold))))))
+                    stringformat(GetString(SI_BMW_FOOTER_GUIDANCE_CHANGES),
+                        sign .. FormatGold(mathabs(diffGold)))))
                 row.action = function()
                     local detail = addon.DetailWindow
                     if detail then
@@ -1057,7 +1104,7 @@ function Window.Update()
     -- enough history to draw, and the whole block is skipped when the setting is
     -- off.
     if sv.showValueHistory ~= false then
-        y = y + SECTION_GAP
+        y = y + SPARK_TOP_GAP
         local innerWidth = CurrentWidth() - PADDING * 2
 
         -- Caption (left) and current-value head (right) share one row.

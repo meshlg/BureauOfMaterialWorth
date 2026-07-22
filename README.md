@@ -143,7 +143,9 @@ materials the total updates on its own.
   to a loud "unpriced!" warning, so the total never silently pretends to be
   complete. Click Coverage to inspect the materials missing a price.
 - A **value-change row** (▲/▼) shows how your Craft Bag's value changed - labeled
-  "This visit" or "This session" - see the note below for exactly what it counts.
+  "This visit" or "This session". Hover it to split the change into material
+  movement and price revaluation; click it to inspect the materials whose
+  quantities changed in the existing detail window.
 - An optional **value-history sparkline** beneath the footer plots your total
   over time. One point is recorded per bag-open (at most once every few hours),
   keeping the last 90; hover it for the oldest, newest, and net-change figures.
@@ -156,15 +158,16 @@ materials the total updates on its own.
 
 > **How the value-change delta works.** Craft Bag market prices do **not** update
 > live - a price source (Master Merchant / TTC / ATT) only refreshes its data
-> across a game restart and reimport. So the delta deliberately counts **only
-> changes to your actual stock**: it appears when your total *item count* changed
-> since the baseline (you deposited or withdrew materials), and is **hidden when
-> only prices drifted**. That way a restart-and-reimport that merely re-values
-> the same materials won't show a misleading "+2M". You choose the baseline in
-> settings: **Each visit** compares against the previous time you opened the bag
-> (persists across restarts), while **Each session** compares against the first
-> open after login/`/reloadui`, so the change accumulates until you log out. On
-> the first open with no baseline yet, and when nothing changed, no delta is shown.
+> across a game restart and reimport. The row appears only when the total item
+> count changed since the baseline, so a restart-and-reimport that only re-values
+> an unchanged bag does not show a misleading "+2M". When stock *did* change,
+> however, the displayed total naturally includes both the value of material
+> movement and any simultaneous price revaluation. Hover the row for that split;
+> click it to list the materials whose quantities changed. You choose the baseline
+> in settings: **Each visit** compares against the previous time you opened the
+> bag (persists across restarts), while **Each session** compares against the first
+> open after login/`/reloadui`, so the change accumulates until you log out. On the
+> first open with no baseline yet, and when nothing changed, no delta is shown.
 
 ### Lives with the Craft Bag
 - The panel is anchored to the Craft Bag and is only on screen while the bag is

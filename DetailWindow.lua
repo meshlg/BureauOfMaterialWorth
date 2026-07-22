@@ -184,6 +184,7 @@ local priceFilter = "all"  -- "all" | "priced" | "unpriced"
 -- the snapshot comparison, where the Qty/Value/Cum/Change columns are repurposed
 -- to signed deltas / share-of-change / status (see SetupRow and UpdateHeaders).
 local viewMode = "category"  -- "category" | "diff"
+local diffSource = "snapshot"  -- "snapshot" | "visit"
 
 -- Column sort state. The list is re-sorted in Populate() before it fills, so it
 -- applies equally to a category view, the whole-bag search, and a live refresh.
@@ -784,7 +785,7 @@ function DetailWindow.Initialize()
         -- visible feedback even when the diff view isn't open to show the reset.
         if snapshot then
             private.ChatInfo(SI_BMW_MSG_SNAPSHOT_SAVED, snapshot.slots or 0,
-                ZO_LocalizeDecimalNumber(zo_round(snapshot.gold or 0)))
+                FormatGold(snapshot.gold or 0))
         end
         UpdateSnapshotStatus()
         -- If the diff view is open, refresh it so it reflects the new baseline
@@ -1338,7 +1339,7 @@ end
 function Populate()
     local materials
     if viewMode == "diff" then
-        if not addon.Valuation.HasSnapshot() then
+        if diffSource == "snapshot" and not addon.Valuation.HasSnapshot() then
             -- No snapshot to diff against: show the "press Remember" prompt.
             emptyLabel:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_DETAIL_NO_SNAPSHOT)))
             FillList({})
@@ -1348,8 +1349,13 @@ function Populate()
             UpdateSnapshotStatus()
             return
         end
-        materials = addon.Valuation.GetDiffMaterials()
-        emptyLabel:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_DETAIL_DIFF_EMPTY)))
+        if diffSource == "visit" then
+            materials = addon.Valuation.GetLastVisitDiffMaterials()
+            emptyLabel:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_DETAIL_VISIT_DIFF_EMPTY)))
+        else
+            materials = addon.Valuation.GetDiffMaterials()
+            emptyLabel:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_DETAIL_DIFF_EMPTY)))
+        end
     else
         if searchQuery ~= "" then
             materials = addon.Valuation.GetMaterialsMatching(searchQuery)
@@ -1380,15 +1386,19 @@ end
 -- searched-across-bag label while a query is active, otherwise the category name.
 function UpdateTitle()
     if viewMode == "diff" then
-        local info = addon.Valuation.GetSnapshotInfo()
-        local whenText
-        if info and info.t then
-            whenText = FormatSnapshotAge(info.t)
+        if diffSource == "visit" then
+            titleLabel:SetText(Colorize(COLOR_ACCENT, GetString(SI_BMW_DETAIL_VISIT_DIFF_TITLE)))
         else
-            whenText = GetString(SI_BMW_TIME_NEVER)
+            local info = addon.Valuation.GetSnapshotInfo()
+            local whenText
+            if info and info.t then
+                whenText = FormatSnapshotAge(info.t)
+            else
+                whenText = GetString(SI_BMW_TIME_NEVER)
+            end
+            titleLabel:SetText(Colorize(COLOR_ACCENT,
+                stringformat(GetString(SI_BMW_DETAIL_DIFF_TITLE), whenText)))
         end
-        titleLabel:SetText(Colorize(COLOR_ACCENT,
-            stringformat(GetString(SI_BMW_DETAIL_DIFF_TITLE), whenText)))
     elseif searchQuery ~= "" then
         -- Search title carries the match count (set by UpdateFooter, which runs
         -- just before this in Populate) so the user sees how many rows matched.
@@ -1408,10 +1418,22 @@ end
 -- rather than the broader category or search before narrowing.
 function UpdateContext()
     if viewMode == "diff" then
-        local info = addon.Valuation.GetSnapshotInfo()
-        local whenText = info and info.t and FormatSnapshotAge(info.t) or GetString(SI_BMW_TIME_NEVER)
-        contextLabel:SetText(Colorize(COLOR_MUTED,
-            stringformat(GetString(SI_BMW_DETAIL_CONTEXT_DIFF), whenText)))
+        if diffSource == "visit" then
+            local details = addon.Valuation.GetLastVisitDeltaDetails()
+            local function SignedAmount(value)
+                local sign = value >= 0 and "+" or "-"
+                return sign .. FormatGold(mathabs(value))
+            end
+            contextLabel:SetText(Colorize(COLOR_MUTED, stringformat(
+                GetString(SI_BMW_DETAIL_CONTEXT_VISIT_DIFF),
+                SignedAmount(details and details.quantityGold or 0),
+                SignedAmount(details and details.priceGold or 0))))
+        else
+            local info = addon.Valuation.GetSnapshotInfo()
+            local whenText = info and info.t and FormatSnapshotAge(info.t) or GetString(SI_BMW_TIME_NEVER)
+            contextLabel:SetText(Colorize(COLOR_MUTED,
+                stringformat(GetString(SI_BMW_DETAIL_CONTEXT_DIFF), whenText)))
+        end
         return
     end
 
@@ -1593,6 +1615,7 @@ function DetailWindow.ShowMaterials()
     end
 
     viewMode = "category"
+    diffSource = "snapshot"
     searchQuery = ""
     suppressSearchEvent = true
     searchBox:SetText("")
@@ -1619,7 +1642,32 @@ function DetailWindow.ShowDiff()
     end
 
     viewMode = "diff"
+    diffSource = "snapshot"
     -- The diff spans the whole bag, so any active search is irrelevant here.
+    searchQuery = ""
+    suppressSearchEvent = true
+    searchBox:SetText("")
+    suppressSearchEvent = false
+
+    UpdateChangesButton()
+    UpdateColumnLayout()
+    UpdateHeaders()
+    UpdatePriceFilterButtons()
+    Populate()
+    windowControl:SetHidden(false)
+    windowControl:BringWindowToTop()
+end
+
+-- Open the same delta table for the material movement behind the latest
+-- visit/session footer delta. The price portion remains visible in its context
+-- line because it can affect unchanged materials and has no per-row quantity.
+function DetailWindow.ShowVisitDiff()
+    if not windowControl or not addon.Valuation.GetLastVisitDeltaDetails() then
+        return
+    end
+
+    viewMode = "diff"
+    diffSource = "visit"
     searchQuery = ""
     suppressSearchEvent = true
     searchBox:SetText("")

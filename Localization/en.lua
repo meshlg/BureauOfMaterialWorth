@@ -45,7 +45,7 @@ local strings = {
     SI_BMW_SETTING_DETAIL_COLUMNS_BASIC = "Basic",
     SI_BMW_SETTING_DETAIL_COLUMNS_ANALYTICS = "Analytics",
     SI_BMW_SETTING_DELTA_MODE_NAME = "\"Since last visit\" baseline",
-    SI_BMW_SETTING_DELTA_MODE_TOOLTIP = "What the footer's value-change line compares against. \"Each visit\": the previous time you opened the Craft Bag (persists across restarts). \"Each session\": the first time you opened it after logging in or reloading the UI, so the change accumulates until you log out or /reloadui. In both modes a pure price change (same materials, refreshed prices) shows no delta.",
+    SI_BMW_SETTING_DELTA_MODE_TOOLTIP = "What the footer's value-change line compares against. \"Each visit\": the previous time you opened the Craft Bag (persists across restarts). \"Each session\": the first time you opened it after logging in or reloading the UI, so the change accumulates until you log out or /reloadui. A pure price change with the same stock shows no delta. When stock changed, the total also includes any price revaluation; hover or click the row to see the split.",
     SI_BMW_SETTING_DELTA_MODE_VISIT = "Each visit",
     SI_BMW_SETTING_DELTA_MODE_SESSION = "Each session",
     SI_BMW_SETTING_BACKGROUND_NAME = "Show background",
@@ -84,14 +84,14 @@ local strings = {
     -- %s = total item count.
     SI_BMW_WINDOW_SUBTITLE = "%d slots · %s stacks · %s items",
     SI_BMW_WINDOW_EMPTY = "Craft Bag is empty",
-    SI_BMW_WINDOW_VERSION_DATE = "Addon version 3.1.071108 dated July 22, 2026",
+    SI_BMW_WINDOW_VERSION_DATE = "Addon version 3.2.174352 dated July 22, 2026",
     -- Category row: the category's share of the grand total. %d = percent.
     SI_BMW_ROW_PERCENT = "%d%%",
 
     -- Window: per-category hover tooltip
-    SI_BMW_TOOLTIP_VALUE = "Value: %s gold",
+    SI_BMW_TOOLTIP_VALUE = "Value: %s",
     -- Net after the guild-store fees (1% listing + 7% sales). %s = gold amount.
-    SI_BMW_TOOLTIP_NET = "Net if sold: %s gold",
+    SI_BMW_TOOLTIP_NET = "Net if sold: %s",
     SI_BMW_TOOLTIP_SLOTS = "Slots (distinct materials): %d",
     SI_BMW_TOOLTIP_STACKS = "Stacks of 200: %s",
     SI_BMW_TOOLTIP_ITEMS = "Items: %s",
@@ -125,6 +125,7 @@ local strings = {
     SI_BMW_DETAIL_CONTEXT_SEARCH = "Search \"%s\" · %d results · whole Craft Bag · %s",
     SI_BMW_DETAIL_CONTEXT_BAG = "Whole Craft Bag · %d materials · %s",
     SI_BMW_DETAIL_CONTEXT_DIFF = "Compared with snapshot %s",
+    SI_BMW_DETAIL_CONTEXT_VISIT_DIFF = "Stock: %s · Prices: %s",
     SI_BMW_DETAIL_CONTEXT_FILTER_ALL = "all prices",
     SI_BMW_DETAIL_GROUP_SNAPSHOT = "Snapshot",
     SI_BMW_DETAIL_SNAPSHOT_READY = "Baseline: %s",
@@ -197,6 +198,8 @@ local strings = {
     -- Diff title; %s = relative time of the snapshot (e.g. "5m ago").
     SI_BMW_DETAIL_DIFF_TITLE = "Changes since %s",
     SI_BMW_DETAIL_DIFF_EMPTY = "Nothing changed since the snapshot.",
+    SI_BMW_DETAIL_VISIT_DIFF_TITLE = "Changes since last visit",
+    SI_BMW_DETAIL_VISIT_DIFF_EMPTY = "No material quantities changed since the last visit.",
     SI_BMW_DETAIL_NO_SNAPSHOT = "No snapshot yet. Press Remember.",
     -- Diff column headers. ASCII "+/-" rather than a Unicode delta glyph, which
     -- the UI font will not render (same reason the addon uses arrow textures).
@@ -258,28 +261,32 @@ local strings = {
     SI_BMW_FOOTER_COVERAGE_UNPRICED_HINT = "Click to view materials without a price.",
     SI_BMW_FOOTER_DELTA_LABEL = "This visit",
     SI_BMW_FOOTER_DELTA_LABEL_SESSION = "This session",
-    SI_BMW_FOOTER_DELTA_VALUE = "%s gold",
+    SI_BMW_FOOTER_DELTA_VALUE = "%s",
+    SI_BMW_FOOTER_DELTA_TOOLTIP_TITLE = "Value change breakdown",
+    SI_BMW_FOOTER_DELTA_TOOLTIP_STOCK = "Stock movement: %s",
+    SI_BMW_FOOTER_DELTA_TOOLTIP_PRICES = "Price revaluation: %s",
+    SI_BMW_FOOTER_DELTA_TOOLTIP_CLICK = "Click to inspect materials that changed quantity.",
     SI_BMW_FOOTER_GUIDANCE_UNPRICED = "%d materials without a price - view list",
     SI_BMW_FOOTER_GUIDANCE_TOP_CATEGORIES = "Top 3 categories hold %d%% - open %s",
-    SI_BMW_FOOTER_GUIDANCE_CHANGES = "Since snapshot: %s%s gold - view changes",
+    SI_BMW_FOOTER_GUIDANCE_CHANGES = "Since snapshot: %s - view changes",
 
     -- Grand-total hover: "net if sold" breakdown of the guild-store selling fees.
     -- The %% renders a literal percent through string.format. %s = a gold amount.
     -- _LISTING/_SALES are shown as deductions; _NET is what's left after both.
     SI_BMW_NET_TOOLTIP_TITLE = "If sold at a guild trader",
-    SI_BMW_NET_TOOLTIP_GROSS = "List price: %s gold",
-    SI_BMW_NET_TOOLTIP_LISTING = "Listing fee (1%%): -%s gold",
-    SI_BMW_NET_TOOLTIP_SALES = "Sales tax (7%%): -%s gold",
-    SI_BMW_NET_TOOLTIP_NET = "You receive (92%%): %s gold",
+    SI_BMW_NET_TOOLTIP_GROSS = "List price: %s",
+    SI_BMW_NET_TOOLTIP_LISTING = "Listing fee (1%%): -%s",
+    SI_BMW_NET_TOOLTIP_SALES = "Sales tax (7%%): -%s",
+    SI_BMW_NET_TOOLTIP_NET = "You receive (92%%): %s",
     -- Value-history sparkline caption + hover tooltip.
     SI_BMW_FOOTER_HISTORY_LABEL = "Value history",
     -- Min/max scale line beneath the area chart. %s = lowest recorded value, %s =
     -- highest. Plain hyphen between them (not an en-dash).
     SI_BMW_HISTORY_SCALE = "%s - %s",
     SI_BMW_HISTORY_TOOLTIP_POINTS = "Recorded points: %d",
-    SI_BMW_HISTORY_TOOLTIP_OLDEST = "Oldest: %s gold",
-    SI_BMW_HISTORY_TOOLTIP_NEWEST = "Newest: %s gold",
-    SI_BMW_HISTORY_TOOLTIP_CHANGE = "Change: %s gold",
+    SI_BMW_HISTORY_TOOLTIP_OLDEST = "Oldest: %s",
+    SI_BMW_HISTORY_TOOLTIP_NEWEST = "Newest: %s",
+    SI_BMW_HISTORY_TOOLTIP_CHANGE = "Change: %s",
 
     -- Window: relative time
     SI_BMW_TIME_NEVER = "never",
@@ -327,20 +334,20 @@ local strings = {
     SI_BMW_LOG_ADDON_LOADED = "Addon loaded.",
     SI_BMW_LOG_CRAFTBAG_SHOWN = "Craft Bag shown.",
     SI_BMW_LOG_CRAFTBAG_HIDDEN = "Craft Bag hidden.",
-    SI_BMW_LOG_RESCAN_DONE = "Full rescan complete: %d slots, total %s gold.",
-    SI_BMW_LOG_SLOT_UPDATED = "Slot %d updated (contribution %s gold).",
+    SI_BMW_LOG_RESCAN_DONE = "Full rescan complete: %d slots, total %s.",
+    SI_BMW_LOG_SLOT_UPDATED = "Slot %d updated (contribution %s).",
     SI_BMW_LOG_LAM_MISSING = "LibAddonMenu-2.0 not found; settings panel unavailable.",
 
     -- Chat messages
     SI_BMW_MSG_LIBPRICE_MISSING = "LibPrice is not installed. Bureau of Material Worth needs LibPrice (and a price source such as Master Merchant or Tamriel Trade Centre) to work.",
     SI_BMW_MSG_VERSION_DEBUG = "Version %s | Debug: %s (%d)",
-    SI_BMW_MSG_STATUS_TOTAL = "Craft Bag value: %s gold.",
+    SI_BMW_MSG_STATUS_TOTAL = "Craft Bag value: %s.",
     SI_BMW_MSG_STATUS_SLOTS = "Priced slots: %d | unpriced slots: %d.",
-    -- First-open-of-session announcement. _DELTA: %s sign (+/-), %s change
-    -- magnitude, %s current total. _TOTAL: %s current total (no known change).
-    SI_BMW_MSG_VISIT_DELTA = "Craft Bag is worth %s gold (%s%s since last visit).",
-    SI_BMW_MSG_VISIT_TOTAL = "Craft Bag is worth %s gold.",
-    SI_BMW_MSG_SIGNIFICANT_DELTA = "Craft Bag value changed by %s%s gold (%d%%).",
+    -- First-open-of-session announcement. _DELTA: %s current total, %s signed
+    -- change (both already include the gold icon). _TOTAL: %s current total.
+    SI_BMW_MSG_VISIT_DELTA = "Craft Bag is worth %s (%s since last visit).",
+    SI_BMW_MSG_VISIT_TOTAL = "Craft Bag is worth %s.",
+    SI_BMW_MSG_SIGNIFICANT_DELTA = "Craft Bag value changed by %s (%d%%).",
     SI_BMW_MSG_PRICES_RECOVERED = "Prices are now available for all Craft Bag materials (%d updated).",
     SI_BMW_MSG_WITHDRAW_RESULT = "Withdrawn: %s/%s items, value: %s.",
     SI_BMW_MSG_WITHDRAW_PARTIAL = "Withdrawn: %s/%s items, value: %s. Backpack space or inventory changes prevented the rest.",
@@ -348,7 +355,7 @@ local strings = {
     SI_BMW_MSG_REFRESH_DONE = "Prices refreshed.",
     -- Chat confirmation when the snapshot is saved/cleared from the detail window.
     -- _SAVED: %d = slots (distinct materials), %s = grand-total gold.
-    SI_BMW_MSG_SNAPSHOT_SAVED = "Snapshot saved: %d slots, %s gold.",
+    SI_BMW_MSG_SNAPSHOT_SAVED = "Snapshot saved: %d slots, %s.",
     SI_BMW_MSG_SNAPSHOT_CLEARED = "Snapshot cleared.",
     SI_BMW_MSG_DEBUG_MODE_SET = "Debug mode set to %s (%d).",
     SI_BMW_MSG_INVALID_DEBUG_LEVEL = "Invalid debug level. Use a number from 0 to 4.",

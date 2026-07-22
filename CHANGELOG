@@ -1,4 +1,13 @@
--------------------------------------------------------------------------------------------------------------
+
+Version: 3.2.174352
+
+- Standardized monetary values on the gold icon across chat messages, tooltips, history, and detail views.
+- Added a breakdown for the visit/session delta: hover the existing footer row to separate stock movement from price revaluation, or click it to inspect changed materials.
+- Corrected delta descriptions to clarify that a stock change can coincide with market-price revaluation.
+- Added spacing between the footer guidance and the value-history graph.
+- Compacted price history and material baselines in SavedVariables while preserving existing snapshots, price changes, and visit-delta diagnostics.
+
+
 Version: 3.1.071108
 
 - Improved English and Russian localization: clarified material-change labels, corrected terminology, and completed missing Russian UI strings.
@@ -6,7 +15,7 @@ Version: 3.1.071108
 - Added chat notification modes: Off, Summary, Important changes, and Detailed withdrawal/price-update reports.
 
 
--------------------------------------------------------------------------------------------------------------
+
 Version: 3.0.220726
 
 Major Milestone Release – First 3.0 Launch
