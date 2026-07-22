@@ -28,15 +28,14 @@ local tonumber = tonumber
 --   priceHistory          [itemId] = { p = unit price, t = unix timestamp }; baseline for the detail window's price-change column
 --   showValueHistory      draw the grand-total sparkline (Craft Bag value over time) in the footer
 --   showProfile           show the @account handle + character name on the panel's title line
---   notifyOnVisit         print the bag value (and since-last-visit change) to chat on the first open of each session
+--   notificationMode      "off", "summary", "important", or "detailed" chat notification mode
 --   valueHistory          ring buffer of grand-total samples; { head = <last index, 0 = empty>,
 --                         entries = { { t = unix, gold, items }, ... } }. See Valuation's
 --                         RecordValuePoint/GetValueHistory for the wrap-around bookkeeping.
 --   snapshot              manual single snapshot of bag composition for the detail window's
 --                         diff view; nil until "Remember" is pressed (then overwritten). Shape:
---                         { t, gold, items, slots, materials = { [itemId] = { name, icon,
---                         quality, count, unitPrice, gold, priced } } }. See Valuation's
---                         CaptureSnapshot/GetDiffMaterials.
+--                         { t, gold, items, slots, materials = { [itemId] = { link, count,
+--                         unitPrice, priced } } }. See Valuation's CaptureSnapshot/GetDiffMaterials.
 local DEFAULT_SAVED_VARS = {
     debugMode = 1,
     showCategoryBreakdown = true,
@@ -49,7 +48,7 @@ local DEFAULT_SAVED_VARS = {
     showBorder = false,
     showValueHistory = true,
     showProfile = true,
-    notifyOnVisit = true,
+    notificationMode = "detailed",
     showInGuildStore = true,
     windowWidth = 400,
     windowOffsetX = -25,
@@ -107,6 +106,20 @@ function Settings.IsCategoryBreakdownEnabled()
     return GetSavedVarsOrDefaults().showCategoryBreakdown ~= false
 end
 
+function Settings.GetNotificationMode()
+    local vars = GetSavedVarsOrDefaults()
+    local mode = vars.notificationMode
+    if mode == "off" or mode == "summary" or mode == "important" or mode == "detailed" then
+        return mode
+    end
+
+    -- Preserve the previous checkbox's behavior for existing accounts until a
+    -- notification mode is selected explicitly.
+    return vars.notifyOnVisit == false and "off" or "summary"
+end
+
+private.GetNotificationMode = Settings.GetNotificationMode
+
 function Settings.SetDebugMode(level, suppressOutput)
     level = tonumber(level) or 0
     if level >= 0 and level <= 4 then
@@ -158,7 +171,7 @@ function Settings.RegisterSettingsPanel()
     end
     local function IsValueHistoryOn() return GetSavedVarsOrDefaults().showValueHistory ~= false end
     local function IsProfileOn()      return GetSavedVarsOrDefaults().showProfile ~= false end
-    local function IsNotifyOn()       return GetSavedVarsOrDefaults().notifyOnVisit ~= false end
+    local function GetNotificationMode() return Settings.GetNotificationMode() end
     local function IsGuildStoreOn()   return GetSavedVarsOrDefaults().showInGuildStore ~= false end
     local function GetDeltaMode()     return GetSavedVarsOrDefaults().deltaMode or DEFAULT_SAVED_VARS.deltaMode end
 
@@ -232,7 +245,12 @@ function Settings.RegisterSettingsPanel()
             StatusRow(SI_BMW_STATUS_LABEL_COLOR_SCALE,   StatusOnOff(IsColorScaleOn())),
             StatusRow(SI_BMW_STATUS_LABEL_VALUE_HISTORY, StatusOnOff(IsValueHistoryOn())),
             StatusRow(SI_BMW_STATUS_LABEL_PROFILE,       StatusOnOff(IsProfileOn())),
-            StatusRow(SI_BMW_STATUS_LABEL_NOTIFY,        StatusOnOff(IsNotifyOn())),
+            StatusRow(SI_BMW_STATUS_LABEL_NOTIFY,        ModeValue(GetString(({
+                off = SI_BMW_SETTING_NOTIFY_MODE_OFF,
+                summary = SI_BMW_SETTING_NOTIFY_MODE_SUMMARY,
+                important = SI_BMW_SETTING_NOTIFY_MODE_IMPORTANT,
+                detailed = SI_BMW_SETTING_NOTIFY_MODE_DETAILED,
+            })[GetNotificationMode()]))),
             StatusRow(SI_BMW_STATUS_LABEL_GUILD_STORE,   StatusOnOff(IsGuildStoreOn())),
             StatusRow(SI_BMW_STATUS_LABEL_DELTA,         ModeValue(DeltaWord())),
         }
@@ -449,14 +467,21 @@ function Settings.RegisterSettingsPanel()
             width = "full",
         },
         {
-            type = "checkbox",
+            type = "dropdown",
             name = GetString(SI_BMW_SETTING_NOTIFY_VISIT_NAME),
             tooltip = GetString(SI_BMW_SETTING_NOTIFY_VISIT_TOOLTIP),
-            getFunc = function() return IsNotifyOn() end,
+            choices = {
+                GetString(SI_BMW_SETTING_NOTIFY_MODE_OFF),
+                GetString(SI_BMW_SETTING_NOTIFY_MODE_SUMMARY),
+                GetString(SI_BMW_SETTING_NOTIFY_MODE_IMPORTANT),
+                GetString(SI_BMW_SETTING_NOTIFY_MODE_DETAILED),
+            },
+            choicesValues = { "off", "summary", "important", "detailed" },
+            getFunc = GetNotificationMode,
             setFunc = function(value)
-                private.savedVars.notifyOnVisit = value
+                private.savedVars.notificationMode = value
             end,
-            default = DEFAULT_SAVED_VARS.notifyOnVisit,
+            default = DEFAULT_SAVED_VARS.notificationMode,
             width = "full",
         },
         {

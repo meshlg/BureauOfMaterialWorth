@@ -1,0 +1,28 @@
+-------------------------------------------------------------------------------------------------------------
+Version: 3.1.071108
+
+- Improved English and Russian localization: clarified material-change labels, corrected terminology, and completed missing Russian UI strings.
+- Reduced SavedVariables size for new material snapshots by storing only the data required for comparison.
+- Added chat notification modes: Off, Summary, Important changes, and Detailed withdrawal/price-update reports.
+
+
+-------------------------------------------------------------------------------------------------------------
+Version: 3.0.220726
+
+Major Milestone Release – First 3.0 Launch
+
+- Fixed extraction, queue, price update, and Coverage display errors.
+- Added context lines in the detail window: category, search, filters, snapshot.
+- Explicit material actions: ✓ for extraction, + for adding to a package.
+- Added table modes: Main / Analytics; Analytics is now the default view.
+- Merged single and batch extraction into a single unified window.
+- Positions of the detail window and extraction window are now preserved.
+- Batch interface is shown only when two or more materials are selected.
+- Queue now includes a summary: materials, required cells, cost, and readiness status.
+- Improved filters: visible active state, reset, and search clearing.
+- Reworked material tooltips: guild trader commissions, technical data, row hover highlighting.
+- Main panel now serves as a guide: tips for unset prices, top categories, and snapshot changes.
+- Added persistent micro-tips: Accumulated 80%, snapshot status, clear freshness labels for bag and prices.
+- Redesigned main panel: enhanced total, subdued footer, highlighted most valuable category, action link with arrow, compact chart.
+- Added version date at the bottom of the main window: Addon version as of 22.07.2026.
+- Added ReleaseDate to the manifest along with a reminder to update both version and date together.

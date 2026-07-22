@@ -69,6 +69,20 @@ local Colorize = private.Colorize
 local FormatGold = private.FormatGold
 
 local LogDebug = private.LogDebug
+local ChatInfo = private.ChatInfo
+
+local function IsDetailedNotificationsEnabled()
+    return private.GetNotificationMode and private.GetNotificationMode() == "detailed"
+end
+
+local function AnnounceWithdrawResult(moved, total, goldValue)
+    if not IsDetailedNotificationsEnabled() then
+        return
+    end
+
+    local message = moved < total and SI_BMW_MSG_WITHDRAW_PARTIAL or SI_BMW_MSG_WITHDRAW_RESULT
+    ChatInfo(message, ZO_LocalizeDecimalNumber(moved), ZO_LocalizeDecimalNumber(total), goldValue)
+end
 
 -- Layout
 -- ---------------------------------------------------------------------------
@@ -165,9 +179,10 @@ local WATCH_TIMER_NAME = addon.name .. "_WithdrawWatchTimeout"
 local isWithdrawing = false
 local engineMoved = 0           -- items confirmed arrived in the backpack
 local engineTotal = 0           -- items the run set out to move
+local engineRequested = 0       -- items requested before jobs were validated
 local engineWatchItemIds = nil  -- [itemId] = true for items this run is moving
 local engineOnProgress = nil    -- callback(moved, total)
-local engineOnFinish = nil      -- callback(moved, total) when the run ends
+local engineOnFinish = nil      -- callback(moved, issued, requested) when the run ends
 
 -- Call the protected RequestMoveItem safely. Guarded so a client where it is NOT
 -- protected still works. Never bind RequestMoveItem to an upvalue -- merely
@@ -189,12 +204,12 @@ local function FinishRun()
     StopWatching()
     isWithdrawing = false
     engineWatchItemIds = nil
-    local moved, total = engineMoved, engineTotal
+    local moved, total, requested = engineMoved, engineTotal, engineRequested
     local onFinish = engineOnFinish
     engineOnProgress = nil
     engineOnFinish = nil
     if onFinish then
-        onFinish(moved, total)
+        onFinish(moved, total, requested)
     end
 end
 
@@ -295,7 +310,8 @@ end
 -- Begin a run. jobs is a list of { itemId, slotIndex, qty }; totalQty is the sum
 -- (for the progress bar). MUST be called synchronously from a click handler so
 -- the protected RequestMoveItem calls run in a trusted callstack.
--- onProgress(moved,total) and onFinish(moved,total) drive the UI.
+-- onProgress(moved,total) drives the UI. onFinish receives the actual moved
+-- count, issued count, and original requested count for an honest final report.
 local function StartRun(jobs, totalQty, onProgress, onFinish)
     if isWithdrawing or totalQty <= 0 then
         return false
@@ -303,6 +319,7 @@ local function StartRun(jobs, totalQty, onProgress, onFinish)
 
     engineMoved = 0
     engineTotal = totalQty
+    engineRequested = totalQty
     engineOnProgress = onProgress
     engineOnFinish = onFinish
     engineWatchItemIds = {}
@@ -504,7 +521,7 @@ local function SelectMaterial(materialData, requestedQty)
     SetRequested(requestedQty or DefaultQuantityForQuality(curQuality))
 end
 
-local function OnPopupFinish(moved, total)
+local function OnPopupFinish(moved, total, requested)
     -- Protected moves cannot be revoked after the click. Keep the final observed
     -- result visible instead of implying that a Hide action cancelled the run.
     popupProgressBar:SetHidden(true)
@@ -520,6 +537,9 @@ local function OnPopupFinish(moved, total)
 
     ComputeMax()
     SetRequested(mathmin(curRequested, curMax))
+    local goldValue = curPriced and curUnitPrice and FormatGold(curUnitPrice * moved)
+        or GetString(SI_BMW_MSG_VALUE_UNKNOWN)
+    AnnounceWithdrawResult(moved or 0, requested or total or 0, goldValue)
 end
 
 local function OnPopupProgress(moved, total)
@@ -983,7 +1003,9 @@ local function NormalizeQueue()
     end
 end
 
-local function OnQueueFinish()
+local queueRunGoldValue = nil
+
+local function OnQueueFinish(moved, total, requested)
     queueProgressBar:SetHidden(true)
     -- Drop exhausted entries and ones whose virtual slot was reused by a
     -- different material; keep valid partials with their quantity clamped.
@@ -992,6 +1014,10 @@ local function OnQueueFinish()
     UpdateQueueSectionVisibility()
     ComputeMax()
     RenderPopup()
+    local goldValue = queueRunGoldValue and requested == total and moved == total
+        and FormatGold(queueRunGoldValue) or GetString(SI_BMW_MSG_VALUE_UNKNOWN)
+    AnnounceWithdrawResult(moved or 0, requested or total or 0, goldValue)
+    queueRunGoldValue = nil
 end
 
 function WithdrawDialog.WithdrawAll()
@@ -1000,6 +1026,7 @@ function WithdrawDialog.WithdrawAll()
     end
 
     local jobs, total, neededSlots = {}, 0, 0
+    local totalGold, allPriced = 0, true
     for i = 1, #queue do
         local e = queue[i]
         local srcStack = GetSlotStackSize(BAG, e.slotIndex) or 0
@@ -1008,6 +1035,11 @@ function WithdrawDialog.WithdrawAll()
             jobs[#jobs + 1] = { itemId = e.itemId, slotIndex = e.slotIndex, qty = qty }
             total = total + qty
             neededSlots = neededSlots + SlotsForQuantity(qty, GetPartialBackpackRoom(e.itemId))
+            if e.priced and e.unitPrice then
+                totalGold = totalGold + e.unitPrice * qty
+            else
+                allPriced = false
+            end
         end
     end
     if total <= 0 or neededSlots > GetNumBagFreeSlots(BAG_BACKPACK) then
@@ -1025,6 +1057,7 @@ function WithdrawDialog.WithdrawAll()
     for i = 1, #popupPresetButtons do
         popupPresetButtons[i]:SetEnabled(false)
     end
+    queueRunGoldValue = allPriced and totalGold or nil
     StartRun(jobs, total, OnQueueProgress, OnQueueFinish)
 end
 

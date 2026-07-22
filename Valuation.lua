@@ -89,6 +89,10 @@ local LogDebug = private.LogDebug
 local LogInfo = private.LogInfo
 local ChatInfo = private.ChatInfo
 
+local function GetNotificationMode()
+    return private.GetNotificationMode and private.GetNotificationMode() or "summary"
+end
+
 -- LibPrice source keys (the second return of ItemLinkToPriceGold) mapped to
 -- their labels. One row per source so the full name and the compact footer label
 -- can never drift apart: `display` is the human-readable name (LibPrice ships no
@@ -349,6 +353,7 @@ local PRICE_RETRY_MAX_ATTEMPTS = 8      -- ~2 min total, then give up until refr
 local PRICE_RETRY_TIMER_NAME   = addon.name .. "_PriceRetry"
 local priceRetryQueued = false
 local priceRetryAttempts = 0
+local priceRetryHealedSlots = 0
 
 local function GetOrCreateCategoryStat(categoryId)
     local stat = categoryStats[categoryId]
@@ -613,6 +618,7 @@ local function StopPriceRetry()
     EVENT_MANAGER:UnregisterForUpdate(PRICE_RETRY_TIMER_NAME)
     priceRetryQueued = false
     priceRetryAttempts = 0
+    priceRetryHealedSlots = 0
 end
 
 -- Arm the slow retry that heals prices which imported after the first scan (see
@@ -627,12 +633,14 @@ local function StartPriceRetry()
     end
     priceRetryQueued = true
     priceRetryAttempts = 0
+    priceRetryHealedSlots = 0
 
     EVENT_MANAGER:RegisterForUpdate(PRICE_RETRY_TIMER_NAME, PRICE_RETRY_INTERVAL_MS, function()
         priceRetryAttempts = priceRetryAttempts + 1
 
         local healed = RepriceUnpricedSlots()
         if healed > 0 then
+            priceRetryHealedSlots = priceRetryHealedSlots + healed
             RefreshWindow()
         end
 
@@ -640,6 +648,10 @@ local function StartPriceRetry()
         -- price sources have long since finished importing by then, and a manual
         -- /bmw refresh remains available for anything still missing.
         if grandUnpricedSlots <= 0 or priceRetryAttempts >= PRICE_RETRY_MAX_ATTEMPTS then
+            if grandUnpricedSlots <= 0 and priceRetryHealedSlots > 0
+                and GetNotificationMode() == "detailed" then
+                ChatInfo(SI_BMW_MSG_PRICES_RECOVERED, priceRetryHealedSlots)
+            end
             StopPriceRetry()
             -- Prices have settled (fully healed, or we gave up): capture the visit
             -- baseline and history point now against the healed total, not the
@@ -725,6 +737,7 @@ function FinalizeVisit()
     visitFinalizePending = false
 
     local sv = private.savedVars
+    local comparisonGold = nil
 
     -- "Since last visit" delta, computed once per open so incremental updates
     -- during the visit don't move it under the user. The baseline depends on the
@@ -736,6 +749,7 @@ function FinalizeVisit()
     if mode == "session" then
         -- Compare against the first open of this session; baseline lives in
         -- memory and resets on reloadui/logout. Establish it on first open.
+        comparisonGold = sessionBaseGold
         if sessionBaseGold ~= nil and sessionBaseItems ~= nil and sessionBaseItems ~= grandItems then
             deltaSinceLastVisit = grandGold - sessionBaseGold
         else
@@ -750,6 +764,7 @@ function FinalizeVisit()
         -- persisted baseline so the next visit measures from here.
         local previousGold = sv.lastVisitGold
         local previousItems = sv.lastVisitItems
+        comparisonGold = previousGold
         if previousGold ~= nil and previousItems ~= nil and previousItems ~= grandItems then
             deltaSinceLastVisit = grandGold - previousGold
         else
@@ -761,24 +776,26 @@ function FinalizeVisit()
         deltaSinceLastVisit = nil
     end
 
-    -- First open of the session: optionally announce the bag's value (and the
-    -- since-last-visit change, when there is one) in chat. Gated on its own
-    -- setting (on by default) and a once-per-session flag so it fires at login,
-    -- not on every reopen. The delta line is omitted when there's no baseline or
-    -- the stock is unchanged -- same gating as the footer, so the chat never
-    -- shows a misleading change.
-    if not visitNotified then
+    -- Summary/detailed modes retain the first-open session digest. Important
+    -- mode instead reports each real change that reaches one percent of the
+    -- selected baseline, avoiding noise from ordinary small movements.
+    local notificationMode = GetNotificationMode()
+    if (notificationMode == "summary" or notificationMode == "detailed") and not visitNotified then
         visitNotified = true
-        if not sv or sv.notifyOnVisit ~= false then
-            local total = ZO_LocalizeDecimalNumber(zo_round(grandGold))
-            if deltaSinceLastVisit and deltaSinceLastVisit ~= 0 then
-                local sign = deltaSinceLastVisit > 0 and "+" or "-"
-                local magnitude = ZO_LocalizeDecimalNumber(zo_round(mathabs(deltaSinceLastVisit)))
-                ChatInfo(SI_BMW_MSG_VISIT_DELTA, total, sign, magnitude)
-            else
-                ChatInfo(SI_BMW_MSG_VISIT_TOTAL, total)
-            end
+        local total = ZO_LocalizeDecimalNumber(zo_round(grandGold))
+        if deltaSinceLastVisit and deltaSinceLastVisit ~= 0 then
+            local sign = deltaSinceLastVisit > 0 and "+" or "-"
+            local magnitude = ZO_LocalizeDecimalNumber(zo_round(mathabs(deltaSinceLastVisit)))
+            ChatInfo(SI_BMW_MSG_VISIT_DELTA, total, sign, magnitude)
+        else
+            ChatInfo(SI_BMW_MSG_VISIT_TOTAL, total)
         end
+    elseif notificationMode == "important" and deltaSinceLastVisit and comparisonGold
+        and comparisonGold > 0 and mathabs(deltaSinceLastVisit) >= comparisonGold * 0.01 then
+        local sign = deltaSinceLastVisit > 0 and "+" or "-"
+        local magnitude = ZO_LocalizeDecimalNumber(zo_round(mathabs(deltaSinceLastVisit)))
+        local percent = zo_round(mathabs(deltaSinceLastVisit) / comparisonGold * 100)
+        ChatInfo(SI_BMW_MSG_SIGNIFICANT_DELTA, sign, magnitude, percent)
     end
 
     RecordValuePoint()
@@ -1230,15 +1247,12 @@ end
 -- it survives restarts. Shape:
 --   snapshot = {
 --     t, gold, items, slots,                 -- header captured at Remember time
---     materials = { [itemId] = { link, name, icon, quality, count, unitPrice,
---                                gold, priced } },
+--     materials = { [itemId] = { link, count, unitPrice, priced } },
 --   }
--- The item link is stored (not just the resolved name) because a name is frozen
--- in the language that was active at Remember time, but a link is language-
--- independent: GetItemLinkName re-resolves it into the CURRENT game language at
--- diff time, even for a material that has since left the bag (no live slot). The
--- resolved `name` is also kept as a fallback for snapshots taken before the link
--- was persisted. icon/quality are language-independent, so storing them is fine.
+-- The link keeps a removed material's name localized to the active game language
+-- and lets the diff rebuild its icon and quality. Gold is derived from count and
+-- unitPrice, so it is not persisted. Older snapshots may still contain name,
+-- icon, and quality; they remain readable without a migration.
 
 -- Resolve a snapshot material's display name in the current game language. Item
 -- links are language-independent, so re-resolving from the stored link each
@@ -1250,6 +1264,13 @@ local function SnapshotMaterialName(entry)
         return zo_strformat(SI_TOOLTIP_ITEM_NAME, GetItemLinkName(entry.link))
     end
     return entry.name
+end
+
+local function SnapshotMaterialVisuals(entry)
+    if entry.link and entry.link ~= "" then
+        return GetItemLinkIcon(entry.link), GetItemLinkFunctionalQuality(entry.link)
+    end
+    return entry.icon, entry.quality
 end
 
 -- Aggregate the current slotInfo by itemId. In practice the craft bag holds each
@@ -1277,8 +1298,8 @@ local function AggregateCurrentByItemId()
 end
 
 -- Freeze the current bag composition into savedVars, overwriting any prior
--- snapshot (single-snapshot model). O(slots) with a name/icon resolve per
--- material; runs only for the one-time automatic baseline or a Remember click.
+-- snapshot (single-snapshot model). O(slots); runs only for the one-time
+-- automatic baseline or a Remember click.
 function Valuation.CaptureSnapshot()
     local sv = private.savedVars
     if not sv then
@@ -1297,19 +1318,21 @@ function Valuation.CaptureSnapshot()
             local itemLink = GetItemLink(BAG, slotIndex)
             local unitPrice = info.stack > 0 and (info.value / info.stack) or 0
             materials[info.itemId] = {
-                -- Store the language-independent link so the diff view can
-                -- re-resolve the name into the current game language; keep the
-                -- resolved name too as a fallback for the row builders.
+                -- The link lets the diff rebuild the localized name, icon, and
+                -- quality for materials no longer in the Craft Bag.
                 link = itemLink,
-                name = GetDisplayName(info.itemId, itemLink),
-                icon = GetItemLinkIcon(itemLink),
-                quality = GetItemLinkFunctionalQuality(itemLink),
                 count = info.stack,
                 gold = info.value,
                 unitPrice = unitPrice,
                 priced = info.priced,
             }
         end
+    end
+
+    -- `gold` is needed only while combining duplicate slots. The persisted diff
+    -- reconstructs it from count and unitPrice.
+    for _, entry in pairs(materials) do
+        entry.gold = nil
     end
 
     sv.snapshot = {
@@ -1403,11 +1426,12 @@ function Valuation.GetDiffMaterials()
             -- single ambiguous "changed" (the sign is otherwise only in the Qty
             -- column).
             local countDelta = cur.count - old.count
+            local icon, quality = SnapshotMaterialVisuals(old)
             rows[#rows + 1] = {
                 itemId = itemId,
                 name = SnapshotMaterialName(old),
-                icon = old.icon,
-                quality = old.quality,
+                icon = icon,
+                quality = quality,
                 diff = true,
                 countDelta = countDelta,
                 goldDelta = cur.unitPrice * countDelta,
@@ -1421,11 +1445,12 @@ function Valuation.GetDiffMaterials()
     -- Materials in the snapshot but no longer present: removed.
     for itemId, old in pairs(snapMats) do
         if not current[itemId] then
+            local icon, quality = SnapshotMaterialVisuals(old)
             rows[#rows + 1] = {
                 itemId = itemId,
                 name = SnapshotMaterialName(old),
-                icon = old.icon,
-                quality = old.quality,
+                icon = icon,
+                quality = quality,
                 diff = true,
                 countDelta = -old.count,
                 goldDelta = -(old.unitPrice * old.count),

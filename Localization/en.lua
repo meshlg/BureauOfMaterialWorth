@@ -56,8 +56,12 @@ local strings = {
     SI_BMW_SETTING_VALUE_HISTORY_TOOLTIP = "Draw a small sparkline of your Craft Bag's total value over time at the bottom of the panel. One point is recorded each time you open the Craft Bag (at most once every few hours), keeping the last 90 points. Hover the sparkline for the oldest, newest, and net-change figures.",
     SI_BMW_SETTING_PROFILE_NAME = "Show account label",
     SI_BMW_SETTING_PROFILE_TOOLTIP = "Show your @account handle and current character name on the panel's title line. The Craft Bag is shared across your whole account, so the handle names whose bag this is. Turn off for a cleaner title.",
-    SI_BMW_SETTING_NOTIFY_VISIT_NAME = "Announce value in chat",
-    SI_BMW_SETTING_NOTIFY_VISIT_TOOLTIP = "Print your Craft Bag's value to chat the first time you open it each session, along with how much it changed since your last visit (when the stock changed). Turn off for no chat output.",
+    SI_BMW_SETTING_NOTIFY_VISIT_NAME = "Chat notifications",
+    SI_BMW_SETTING_NOTIFY_VISIT_TOOLTIP = "Off: no automatic messages.\nSummary: Craft Bag value on the first open each session.\nImportant: report changes of at least 1%% of the selected baseline.\nDetailed: summary plus withdrawal results and completed price updates.",
+    SI_BMW_SETTING_NOTIFY_MODE_OFF = "Off",
+    SI_BMW_SETTING_NOTIFY_MODE_SUMMARY = "Summary",
+    SI_BMW_SETTING_NOTIFY_MODE_IMPORTANT = "Important changes",
+    SI_BMW_SETTING_NOTIFY_MODE_DETAILED = "Detailed",
     SI_BMW_SETTING_GUILD_STORE_NAME = "Show in guild store",
     SI_BMW_SETTING_GUILD_STORE_TOOLTIP = "Show the value panel while the guild store is open. It is shifted further left so it does not cover the store's browse panel. Turn off to hide the panel entirely while trading.",
     SI_BMW_SETTING_WIDTH_NAME = "Window width",
@@ -80,7 +84,7 @@ local strings = {
     -- %s = total item count.
     SI_BMW_WINDOW_SUBTITLE = "%d slots · %s stacks · %s items",
     SI_BMW_WINDOW_EMPTY = "Craft Bag is empty",
-    SI_BMW_WINDOW_VERSION_DATE = "Addon version 3.0.060753 dated July 22, 2026",
+    SI_BMW_WINDOW_VERSION_DATE = "Addon version 3.1.071108 dated July 22, 2026",
     -- Category row: the category's share of the grand total. %d = percent.
     SI_BMW_ROW_PERCENT = "%d%%",
 
@@ -160,8 +164,8 @@ local strings = {
     -- gold amount; a gold icon is appended in code.
     SI_BMW_DETAIL_FOOTER_NET_SOLD = "net %s",
     SI_BMW_DETAIL_FOOTER_NET = "Net:",
-    SI_BMW_DETAIL_FOOTER_GAINED = "%d up",
-    SI_BMW_DETAIL_FOOTER_LOST = "%d down",
+    SI_BMW_DETAIL_FOOTER_GAINED = "Added: %d",
+    SI_BMW_DETAIL_FOOTER_LOST = "Reduced: %d",
 
     -- Snapshot + diff view (detail window). A one-time automatic baseline is
     -- captured on the first non-empty bag open; Remember overwrites it with a
@@ -336,6 +340,11 @@ local strings = {
     -- magnitude, %s current total. _TOTAL: %s current total (no known change).
     SI_BMW_MSG_VISIT_DELTA = "Craft Bag is worth %s gold (%s%s since last visit).",
     SI_BMW_MSG_VISIT_TOTAL = "Craft Bag is worth %s gold.",
+    SI_BMW_MSG_SIGNIFICANT_DELTA = "Craft Bag value changed by %s%s gold (%d%%).",
+    SI_BMW_MSG_PRICES_RECOVERED = "Prices are now available for all Craft Bag materials (%d updated).",
+    SI_BMW_MSG_WITHDRAW_RESULT = "Withdrawn: %s/%s items, value: %s.",
+    SI_BMW_MSG_WITHDRAW_PARTIAL = "Withdrawn: %s/%s items, value: %s. Backpack space or inventory changes prevented the rest.",
+    SI_BMW_MSG_VALUE_UNKNOWN = "unknown",
     SI_BMW_MSG_REFRESH_DONE = "Prices refreshed.",
     -- Chat confirmation when the snapshot is saved/cleared from the detail window.
     -- _SAVED: %d = slots (distinct materials), %s = grand-total gold.
