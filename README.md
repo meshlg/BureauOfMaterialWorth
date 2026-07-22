@@ -66,14 +66,20 @@ materials the total updates on its own.
   sort by it (click again to flip direction); the table opens on **value,
   highest first** - the "what to sell right now" order - so the stacks that make
   up most of the bag's worth sit at the top.
+- Choose a compact **Basic** table (material, quantity, value) for everyday
+  scanning, or **Analytics** to additionally show cumulative share and price
+  change. The snapshot Changes view always retains its delta, share, and status
+  columns.
 - A **cumulative-share column** ("Cum %") shows the running share of the list's
   total value read top-down, so you can see at a glance that "the top few stacks
   are 80% of the worth" - haul those to the guild and skip the long tail.
 - A **price-change column** (▲/▼ with a percentage) shows how each material's
-  price has moved since it was last recorded. The addon keeps its own price
-  history for this - a material shows "-" the first time you view it, then a real
-  change once a baseline exists. The baseline advances roughly once a day, so the
-  figure reflects day-over-day market drift rather than noise.
+  price has moved since it was last refreshed from a price source. The addon keeps
+  its own price history for this - a material shows "-" until a price refresh has
+  established a baseline, then a real change once a later refresh observes it.
+  The baseline advances roughly once a day, so the figure reflects day-over-day
+  market drift rather than noise; opening, sorting, or searching the table never
+  changes that history.
 - The window is **movable** and closes with the Craft Bag, so it never lingers
   over the rest of your UI.
 
@@ -84,6 +90,9 @@ materials the total updates on its own.
 - Matching is case-insensitive substring; clearing the box (or pressing Escape)
   returns to the category you opened. Withdraw and queue work from search results
   exactly as from a category.
+- Compact **All / Priced / No price** filters narrow the active category or search
+  results. Clicking the main panel's Coverage row opens the whole-bag **No price**
+  view directly.
 
 ### Snapshot and changes
 
@@ -95,37 +104,44 @@ materials the total updates on its own.
   portion of the total change, and **Status** reads "new", "gone", "added", or
   "reduced".
   Rows are sorted by the biggest gold movement first.
-- There is **one snapshot**, taken manually - pressing Remember again overwrites it
-  - and it persists across sessions. The button tooltips spell this out. Before any
-  snapshot exists, Changes shows a short "press Remember" prompt.
+- There is **one snapshot** and it persists across sessions. The addon creates a
+  one-time automatic baseline when you first open a **non-empty** Craft Bag after
+  installing it, so Changes starts collecting useful information immediately.
+  Pressing Remember at any time replaces that baseline with a snapshot you chose.
+  Clearing the snapshot leaves Changes empty until you press Remember again.
 - As with the footer's value-change line, the diff counts **only real stock
   changes**: a material whose quantity did not move is omitted, so a price-source
   reimport that merely re-values the same materials never shows a phantom change.
 
 ### Withdraw materials into your backpack
-- **Left-click any material** (in a category or in search results) to open a
-  withdraw popup: pick a quantity with the presets (1, 10, 100, and stack
-  multiples) or type an exact amount, then confirm. The popup shows your **free
+- **Hover a material** (in a category or in search results) to reveal explicit
+  actions: **withdraw** opens a popup where you can pick a quantity with presets
+  (1, 10, 100, and stack multiples) or type an exact amount, while **add to
+  queue** collects the material for a batch. The withdraw popup shows your **free
   backpack slots**, the **maximum you can withdraw** (clamped to what you hold and
   to backpack space), and the **total gold value** of the amount chosen.
 - A **progress bar** tracks large withdrawals as the items actually arrive in your
-  backpack.
-- **Right-click materials** to add them to a **withdraw queue** - a list shown
-  below the table where you can set a per-material quantity, see the total value
-  and how many backpack slots the queue needs, and **withdraw everything at once**.
+  backpack. Once the protected move requests have been issued, the popup's Cancel
+  button becomes **Hide**: hiding it does not pretend to cancel an in-flight move,
+  and reopening the popup shows the final observed result.
+- The **withdraw queue** expands inside that same withdraw window after using a
+  row's queue action or **Add to queue**. There you can set a per-material
+  quantity, see the total value and how many backpack slots the queue needs, and
+  **withdraw everything at once**.
+  Its quantities, capacity, and current prices refresh while it is open.
 - The **default quantity is keyed to item quality**, so a careless click cannot
   dump a whole stack of something precious: cheap bulk mats default high, valuable
   mats low. You can always raise it up to the maximum.
 
 ### Honest about its data
-- The footer is a compact two-column readout. **Updated** shows when the value
-  was last computed ("just now", "5m ago", …), refreshed live while the bag is
-  open.
+- The footer separates **Inventory** (when the bag valuation last changed) from
+  **Prices** (when LibPrice was last queried), so a deposit never masquerades as
+  fresh market data.
 - **Coverage** reports how many slots are priced (e.g. "468/469 priced") and the
   **price source** it drew from, shown compactly (MM / TTC / ATT, with a "+" when
   several contributed). When more than half the slots are unpriced the row turns
   to a loud "unpriced!" warning, so the total never silently pretends to be
-  complete.
+  complete. Click Coverage to inspect the materials missing a price.
 - A **value-change row** (▲/▼) shows how your Craft Bag's value changed - labeled
   "This visit" or "This session" - see the note below for exactly what it counts.
 - An optional **value-history sparkline** beneath the footer plots your total

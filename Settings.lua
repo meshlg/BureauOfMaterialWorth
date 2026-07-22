@@ -14,11 +14,14 @@ local tonumber = tonumber
 --   showCategoryIcons     draw a profession icon left of each category name
 --   colorScaleGold        tint gold figures by magnitude (dim -> hot) instead of flat gold
 --   sortByValue           order category rows by descending value (vs profession order)
+--   detailColumnMode      "basic" (name/qty/value) or "analytics" (adds cumulative share and price change)
 --   deltaMode             "since last visit" baseline: "visit" (per open) or "session" (until reloadui/logout)
 --   showBackground        draw the panel's dark background fill
 --   showBorder            draw the panel's border edge
 --   windowWidth           panel width in px (see Window MIN/MAX/STEP bounds)
 --   windowOffsetX/Y       fine-tune the window position relative to ZO_CraftBag
+--   detailWindowLeft/Top  saved absolute position of the material detail window
+--   withdrawWindowLeft/Top saved absolute position of the unified withdraw window
 --   showInGuildStore      show the panel while the guild store is open (shifted clear of the store UI)
 --   lastVisitGold         grand total saved on last bag close, for the "since last visit" delta
 --   lastVisitItems        total item count saved alongside it, to gate the delta on real stock changes
@@ -40,6 +43,7 @@ local DEFAULT_SAVED_VARS = {
     showCategoryIcons = true,
     colorScaleGold = true,
     sortByValue = false,
+    detailColumnMode = "analytics",
     deltaMode = "visit",
     showBackground = true,
     showBorder = false,
@@ -148,6 +152,10 @@ function Settings.RegisterSettingsPanel()
     local function IsIconsOn()        return GetSavedVarsOrDefaults().showCategoryIcons ~= false end
     local function IsColorScaleOn()   return GetSavedVarsOrDefaults().colorScaleGold ~= false end
     local function IsSortByValueOn()  return GetSavedVarsOrDefaults().sortByValue == true end
+    local function GetDetailColumnMode()
+        local mode = GetSavedVarsOrDefaults().detailColumnMode
+        return mode == "analytics" and "analytics" or "basic"
+    end
     local function IsValueHistoryOn() return GetSavedVarsOrDefaults().showValueHistory ~= false end
     local function IsProfileOn()      return GetSavedVarsOrDefaults().showProfile ~= false end
     local function IsNotifyOn()       return GetSavedVarsOrDefaults().notifyOnVisit ~= false end
@@ -348,6 +356,25 @@ function Settings.RegisterSettingsPanel()
                     reference = "BMWSettingsSortByValue",
                 },
             },
+        },
+        {
+            type = "dropdown",
+            name = GetString(SI_BMW_SETTING_DETAIL_COLUMNS_NAME),
+            tooltip = GetString(SI_BMW_SETTING_DETAIL_COLUMNS_TOOLTIP),
+            choices = {
+                GetString(SI_BMW_SETTING_DETAIL_COLUMNS_BASIC),
+                GetString(SI_BMW_SETTING_DETAIL_COLUMNS_ANALYTICS),
+            },
+            choicesValues = { "basic", "analytics" },
+            getFunc = GetDetailColumnMode,
+            setFunc = function(value)
+                private.savedVars.detailColumnMode = value
+                if addon.DetailWindow then
+                    addon.DetailWindow.ApplyColumnMode()
+                end
+            end,
+            default = DEFAULT_SAVED_VARS.detailColumnMode,
+            width = "full",
         },
         {
             type = "dropdown",

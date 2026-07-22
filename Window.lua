@@ -23,7 +23,7 @@ local COLOR_LOSS     = private.COLOR_LOSS
 -- ---------------------------------------------------------------------------
 -- A slim panel anchored beside the craft bag. It sizes itself to its content:
 -- a title, a prominent grand total, a subtitle, a divider, one row per non-empty
--- category, another divider, then a two-line footer. Category rows are two
+-- category, another divider, then a three-line footer. Category rows are two
 -- columns (name left, gold right) so the figures line up.
 --
 -- The width is user-configurable (see Settings); DEFAULT_WINDOW_WIDTH is the
@@ -36,12 +36,19 @@ local MAX_WINDOW_WIDTH = 600
 local WINDOW_WIDTH_STEP = 10
 local PADDING        = 12
 local TITLE_HEIGHT   = 22
-local TOTAL_HEIGHT   = 30
+local TITLE_TO_TOTAL_GAP = 10
+local TOTAL_HEIGHT   = 34
+local TOTAL_TO_SUBTITLE_GAP = 5
 local SUBTITLE_HEIGHT = 18
 local ROW_HEIGHT     = 22
 local DIVIDER_GAP    = 10   -- vertical space a divider occupies
 local FOOTER_LINE    = 16
 local SECTION_GAP    = 6    -- small gap between blocks
+local VERSION_GAP    = FOOTER_LINE + SECTION_GAP
+local HEADER_TO_DIVIDER_GAP = 12
+local FOOTER_ALPHA   = 0.82
+local LEADER_MARKER_WIDTH = 3
+local LEADER_MARKER_COLOR = { 0.44, 0.80, 0.62, 0.95 }
 local BG_ALPHA       = 0.82
 local EDGE_ALPHA     = 0.9  -- border opacity when the border is shown
 
@@ -55,16 +62,16 @@ local EDGE_ALPHA     = 0.9  -- border opacity when the border is shown
 -- brightened so "now" stands out. A head line above carries the current value +
 -- trend arrow; a scale line below carries the series min and max. SPARK_MIN_BAR_H
 -- keeps the lowest sample a visible sliver rather than nothing.
-local SPARK_HEIGHT     = 40  -- area-strip height in px (head line above, scale below)
+local SPARK_HEIGHT     = 32  -- area-strip height in px (head line above, scale below)
 local SPARK_MIN_BAR_H  = 2   -- floor height so the minimum sample still draws
 local SPARK_SCALE_GAP  = 2   -- gap between the strip and the min/max scale line
 -- Area fill + "now" highlight, tinted by trend. RGBA floats (CT_BACKDROP wants
 -- components, not the hex the labels use). The fill is semi-transparent so it
 -- reads as an area wash; the newest bar is opaque and brighter to mark "now".
-local SPARK_AREA_UP       = { 0.42, 0.62, 0.47, 0.80 }  -- rising: green fill
-local SPARK_AREA_UP_NOW   = { 0.56, 0.85, 0.62, 1.00 }
-local SPARK_AREA_DOWN     = { 0.62, 0.42, 0.42, 0.80 }  -- falling: red fill
-local SPARK_AREA_DOWN_NOW = { 0.85, 0.56, 0.56, 1.00 }
+local SPARK_AREA_UP       = { 0.38, 0.56, 0.43, 0.28 }  -- subdued history fill
+local SPARK_AREA_UP_NOW   = { 0.56, 0.85, 0.62, 0.92 }  -- current point
+local SPARK_AREA_DOWN     = { 0.56, 0.38, 0.38, 0.28 }
+local SPARK_AREA_DOWN_NOW = { 0.85, 0.56, 0.56, 0.92 }
 
 -- Expose the width bounds so the settings slider stays in sync with the layout.
 Window.DEFAULT_WIDTH = DEFAULT_WINDOW_WIDTH
@@ -192,13 +199,16 @@ local titleLabel      -- "Craft Bag Worth"
 local profileLabel    -- "@account · Character" on the right of the title line
 local totalLabel      -- prominent grand-total gold figure
 local subtitleLabel   -- "<n> slots · <n> stacks · <n> items"
+local versionLabel    -- compact release date at the bottom of the panel
 local dividerTop      -- line under the header block
 local dividerBottom   -- line above the footer
 -- Footer rows are two-column (muted label left, value right), mirroring the
 -- category rows above. Each is a { container, label, value } record.
-local footerUpdatedRow  -- "Updated" -> "<ago>"
+local footerInventoryRow -- "Inventory" -> "<ago>"
+local footerPriceRefreshRow -- "Prices" -> "<ago>"
 local footerPricesRow   -- "Coverage" -> "<n>/<n> · <source>" (or a warning)
 local footerDeltaRow    -- "This visit"/"This session" -> "▲ <gold>" (hidden when none)
+local footerGuidanceRow -- one contextual next-step prompt below the footer
 -- Value-history area chart: a caption label, a head line (current value + trend
 -- arrow) on the right of the caption, a container holding pooled bar controls
 -- that form the filled silhouette, and a scale line beneath carrying the series
@@ -264,6 +274,7 @@ local function CreateFooterRow(name)
     local container = WINDOW_MANAGER:CreateControl(name, windowControl, CT_CONTROL)
     container:SetWidth(CurrentWidth() - PADDING * 2)
     container:SetHeight(FOOTER_LINE)
+    container:SetAlpha(FOOTER_ALPHA)
 
     local label = WINDOW_MANAGER:CreateControl(nil, container, CT_LABEL)
     label:SetFont("ZoFontGameSmall")
@@ -282,6 +293,35 @@ local function CreateFooterRow(name)
     return { container = container, label = label, value = value }
 end
 
+-- A single full-width action line appears only when the summary can point to a
+-- concrete next step. Its trailing arrow makes it read as a game-style link,
+-- not as another diagnostic metric.
+local function CreateGuidanceRow(name)
+    local container = WINDOW_MANAGER:CreateControl(name, windowControl, CT_CONTROL)
+    container:SetWidth(CurrentWidth() - PADDING * 2)
+    container:SetHeight(FOOTER_LINE)
+    container:SetMouseEnabled(true)
+    container:SetHidden(true)
+    container:SetAlpha(0.84)
+
+    local label = WINDOW_MANAGER:CreateControl(nil, container, CT_LABEL)
+    label:SetFont("ZoFontGameSmall")
+    label:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
+    label:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+    label:SetAnchor(LEFT, container, LEFT, 0, 0)
+    label:SetWidth(CurrentWidth() - PADDING * 2 - 16)
+
+    local arrow = WINDOW_MANAGER:CreateControl(nil, container, CT_LABEL)
+    arrow:SetFont("ZoFontGameSmall")
+    arrow:SetHorizontalAlignment(TEXT_ALIGN_RIGHT)
+    arrow:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+    arrow:SetAnchor(RIGHT, container, RIGHT, 0, 0)
+    arrow:SetDimensions(12, FOOTER_LINE)
+    arrow:SetText(Colorize(COLOR_ACCENT, ">"))
+
+    return { container = container, label = label, arrow = arrow, action = nil }
+end
+
 -- Build (or fetch from the pool) the Nth category row. Each row is a mouse-
 -- enabled container with a left name label and a right gold label; the
 -- container carries the row's data and shows a detail tooltip on hover. Rows
@@ -298,12 +338,18 @@ local function AcquireRow(index)
     container:SetHeight(ROW_HEIGHT)
     container:SetMouseEnabled(true)
 
+    local leaderMarker = WINDOW_MANAGER:CreateControl(nil, container, CT_TEXTURE)
+    leaderMarker:SetDimensions(LEADER_MARKER_WIDTH, ROW_HEIGHT - 6)
+    leaderMarker:SetAnchor(LEFT, container, LEFT, 0, 0)
+    leaderMarker:SetColor(unpack(LEADER_MARKER_COLOR))
+    leaderMarker:SetHidden(true)
+
     local nameLabel = WINDOW_MANAGER:CreateControl(nil, container, CT_LABEL)
     nameLabel:SetFont("ZoFontGame")
     nameLabel:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
     nameLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
-    nameLabel:SetAnchor(LEFT, container, LEFT, 0, 0)
-    nameLabel:SetWidth(CurrentWidth() * 0.5)
+    nameLabel:SetAnchor(LEFT, container, LEFT, LEADER_MARKER_WIDTH + 5, 0)
+    nameLabel:SetWidth(CurrentWidth() * 0.5 - LEADER_MARKER_WIDTH - 5)
 
     local goldLabel = WINDOW_MANAGER:CreateControl(nil, container, CT_LABEL)
     goldLabel:SetFont("ZoFontGame")
@@ -312,7 +358,12 @@ local function AcquireRow(index)
     goldLabel:SetAnchor(RIGHT, container, RIGHT, 0, 0)
     goldLabel:SetWidth(CurrentWidth() * 0.5 - PADDING)
 
-    local row = { container = container, name = nameLabel, gold = goldLabel }
+    local row = {
+        container = container,
+        name = nameLabel,
+        gold = goldLabel,
+        leaderMarker = leaderMarker,
+    }
 
     -- Hover: a standard InformationTooltip with the per-category detail. Anchored
     -- to the left of the row since the window itself sits left of the craft bag.
@@ -420,7 +471,8 @@ function Window.Initialize()
     totalLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_Total", windowControl, CT_LABEL)
     totalLabel:SetFont("ZoFontWinH1")
     totalLabel:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
-    totalLabel:SetAnchor(TOPLEFT, titleLabel, BOTTOMLEFT, 0, SECTION_GAP)
+    totalLabel:SetDimensions(CurrentWidth() - PADDING * 2, TOTAL_HEIGHT)
+    totalLabel:SetAnchor(TOPLEFT, titleLabel, BOTTOMLEFT, 0, TITLE_TO_TOTAL_GAP)
     -- Hover the grand total for the "net if sold" breakdown: the guild-store
     -- listing fee (1%) and sales tax (7%) itemized, then the gold left after both.
     -- The Craft Bag total is valued at market/list price, so this answers "what
@@ -457,14 +509,68 @@ function Window.Initialize()
     subtitleLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_Subtitle", windowControl, CT_LABEL)
     subtitleLabel:SetFont("ZoFontGameSmall")
     subtitleLabel:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
-    subtitleLabel:SetAnchor(TOPLEFT, totalLabel, BOTTOMLEFT, 0, 2)
+    subtitleLabel:SetAlpha(0.78)
+    subtitleLabel:SetAnchor(TOPLEFT, totalLabel, BOTTOMLEFT, 0, TOTAL_TO_SUBTITLE_GAP)
+    subtitleLabel:SetWidth(CurrentWidth() - PADDING * 2)
+
+    versionLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_Version", windowControl, CT_LABEL)
+    versionLabel:SetFont("ZoFontGameSmall")
+    versionLabel:SetHorizontalAlignment(TEXT_ALIGN_RIGHT)
+    versionLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+    versionLabel:SetAlpha(0.58)
+    versionLabel:SetWidth(CurrentWidth() - PADDING * 2)
+    versionLabel:SetHeight(FOOTER_LINE)
+    versionLabel:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_WINDOW_VERSION_DATE)))
 
     dividerTop = CreateDivider(addon.name .. "_DividerTop")
     dividerBottom = CreateDivider(addon.name .. "_DividerBottom")
+    dividerBottom:SetColor(1, 1, 1, 0.22)
 
-    footerUpdatedRow = CreateFooterRow(addon.name .. "_FooterUpdated")
+    footerInventoryRow = CreateFooterRow(addon.name .. "_FooterInventory")
+    footerPriceRefreshRow = CreateFooterRow(addon.name .. "_FooterPriceRefresh")
     footerPricesRow = CreateFooterRow(addon.name .. "_FooterPrices")
     footerDeltaRow = CreateFooterRow(addon.name .. "_FooterDelta")
+    footerGuidanceRow = CreateGuidanceRow(addon.name .. "_FooterGuidance")
+
+    footerPricesRow.container:SetMouseEnabled(true)
+    footerPricesRow.container:SetHandler("OnMouseUp", function(_, button, upInside)
+        if not upInside or button ~= MOUSE_BUTTON_INDEX_LEFT then
+            return
+        end
+        if not lastSnapshot or (lastSnapshot.unpricedSlots or 0) <= 0 then
+            return
+        end
+        local detail = addon.DetailWindow
+        if detail and detail.ShowUnpriced then
+            detail.ShowUnpriced()
+        end
+    end)
+    footerPricesRow.container:SetHandler("OnMouseEnter", function(self)
+        if not lastSnapshot or (lastSnapshot.unpricedSlots or 0) <= 0 then
+            return
+        end
+        InitializeTooltip(InformationTooltip, self, TOPRIGHT, -6, 0, BOTTOMRIGHT)
+        InformationTooltip:AddLine(GetString(SI_BMW_FOOTER_COVERAGE_LABEL), "ZoFontHeader2",
+            ZO_NORMAL_TEXT:UnpackRGB())
+        ZO_Tooltip_AddDivider(InformationTooltip)
+        InformationTooltip:AddLine(GetString(SI_BMW_FOOTER_COVERAGE_UNPRICED_HINT),
+            "ZoFontGame", 0.82, 0.56, 0.37)
+    end)
+    footerPricesRow.container:SetHandler("OnMouseExit", function()
+        ClearTooltip(InformationTooltip)
+    end)
+
+    footerGuidanceRow.container:SetHandler("OnMouseUp", function(_, button, upInside)
+        if button == MOUSE_BUTTON_INDEX_LEFT and upInside and footerGuidanceRow.action then
+            footerGuidanceRow.action()
+        end
+    end)
+    footerGuidanceRow.container:SetHandler("OnMouseEnter", function()
+        footerGuidanceRow.container:SetAlpha(1)
+    end)
+    footerGuidanceRow.container:SetHandler("OnMouseExit", function()
+        footerGuidanceRow.container:SetAlpha(0.84)
+    end)
 
     -- Value-history area chart: a muted caption with a filled strip beneath it,
     -- a current-value + trend head on the caption row, and a min/max scale line
@@ -534,9 +640,14 @@ local function RenderFooter()
         return
     end
 
-    -- Updated <ago>
-    footerUpdatedRow.label:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_FOOTER_UPDATED_LABEL)))
-    footerUpdatedRow.value:SetText(Colorize(COLOR_MUTED, FormatTimeAgo(lastSnapshot.lastScanTimeMs)))
+    -- Keep the inventory calculation and the underlying price lookup separate:
+    -- a deposit can revalue the bag immediately without making market data newer.
+    footerInventoryRow.label:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_FOOTER_INVENTORY_LABEL)))
+    footerInventoryRow.value:SetText(Colorize(COLOR_MUTED,
+        FormatTimeAgo(lastSnapshot.lastInventoryUpdateMs)))
+    footerPriceRefreshRow.label:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_FOOTER_PRICES_LABEL)))
+    footerPriceRefreshRow.value:SetText(Colorize(COLOR_MUTED,
+        FormatTimeAgo(lastSnapshot.lastPriceRefreshMs)))
 
     -- Coverage -> "<priced>/<slots> · <source>", or a warning when unpriced.
     -- The source is shown compactly (MM/TTC/ATT) to fit the value column; when
@@ -589,6 +700,82 @@ local function RenderFooter()
     else
         footerDeltaRow.container:SetHidden(true)
     end
+end
+
+-- Pick one useful next step rather than stacking advice. Price coverage comes
+-- first because it affects the trustworthiness of every total; then surface a
+-- concentrated bag's most valuable category; finally point at material movement
+-- relative to the saved snapshot.
+local function RenderGuidance(snapshot)
+    local row = footerGuidanceRow
+    row.action = nil
+
+    local unpriced = snapshot.unpricedSlots or 0
+    if unpriced > 0 then
+        row.label:SetText(Colorize(COLOR_ACCENT, stringformat(
+            GetString(SI_BMW_FOOTER_GUIDANCE_UNPRICED), unpriced)))
+        row.action = function()
+            local detail = addon.DetailWindow
+            if detail and detail.ShowUnpriced then
+                detail.ShowUnpriced()
+            end
+        end
+    else
+        local categories = snapshot.categories or {}
+        local topCategory, topThreeGold = nil, 0
+        local topOne, topTwo, topThree = nil, nil, nil
+        for index = 1, #categories do
+            local category = categories[index]
+            if not topOne or category.gold > topOne.gold then
+                topThree, topTwo, topOne = topTwo, topOne, category
+            elseif not topTwo or category.gold > topTwo.gold then
+                topThree, topTwo = topTwo, category
+            elseif not topThree or category.gold > topThree.gold then
+                topThree = category
+            end
+        end
+        if topOne and topTwo and topThree then
+            topCategory = topOne
+            topThreeGold = topOne.gold + topTwo.gold + topThree.gold
+        end
+
+        local total = snapshot.gold or 0
+        if topCategory and total > 0 and topThreeGold / total >= 0.8 then
+            local percent = zo_round(topThreeGold / total * 100)
+            row.label:SetText(Colorize(COLOR_ACCENT, stringformat(
+                GetString(SI_BMW_FOOTER_GUIDANCE_TOP_CATEGORIES), percent, topCategory.name)))
+            row.action = function()
+                local detail = addon.DetailWindow
+                if detail then
+                    detail.Show(topCategory.id, topCategory.name)
+                end
+            end
+        else
+            local valuation = addon.Valuation
+            local diffGold = 0
+            if valuation and valuation.HasSnapshot and valuation.HasSnapshot()
+                and valuation.GetDiffMaterials then
+                local changes = valuation.GetDiffMaterials()
+                for index = 1, #changes do
+                    diffGold = diffGold + (changes[index].goldDelta or 0)
+                end
+            end
+            if diffGold ~= 0 then
+                local sign = diffGold > 0 and "+" or "-"
+                row.label:SetText(Colorize(COLOR_ACCENT,
+                    stringformat(GetString(SI_BMW_FOOTER_GUIDANCE_CHANGES), sign,
+                    ZO_LocalizeDecimalNumber(zo_round(mathabs(diffGold))))))
+                row.action = function()
+                    local detail = addon.DetailWindow
+                    if detail then
+                        detail.ShowDiff()
+                    end
+                end
+            end
+        end
+    end
+
+    row.container:SetHidden(row.action == nil)
 end
 
 -- Acquire (or create) the Nth chart bar, a CT_BACKDROP fill bottom-anchored in
@@ -698,7 +885,7 @@ local function RenderSparkline(innerWidth)
     -- Head: current value + trend arrow + gold icon, colored by direction. The
     -- arrow and gold icon are textures (left outside Colorize, since textures
     -- aren't tinted); only the number is colored. Matches FormatGold's idiom.
-    local headColor = rising and COLOR_GAIN or COLOR_LOSS
+    local headColor = COLOR_MUTED
     local headArrow = rising and ARROW_UP or ARROW_DOWN
     sparkHeadLabel:SetText(headArrow .. " " ..
         Colorize(headColor, ZO_LocalizeDecimalNumber(zo_round(lastGold))) .. " " .. GOLD_ICON)
@@ -731,6 +918,7 @@ function Window.Update()
     local sv = GetSavedVars()
     local snapshot = valuation.GetSnapshot(sv.sortByValue == true)
     lastSnapshot = snapshot
+    RenderGuidance(snapshot)
 
     -- Header block: prominent total + subtitle counts.
     totalLabel:SetText(FormatGold(snapshot.gold))
@@ -757,10 +945,11 @@ function Window.Update()
         subtitleLabel:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_WINDOW_EMPTY)))
     end
 
-    local y = PADDING + TITLE_HEIGHT + SECTION_GAP + TOTAL_HEIGHT + SUBTITLE_HEIGHT
+    local y = PADDING + TITLE_HEIGHT + TITLE_TO_TOTAL_GAP + TOTAL_HEIGHT
+        + TOTAL_TO_SUBTITLE_GAP + SUBTITLE_HEIGHT
 
     -- Divider under the header.
-    y = y + SECTION_GAP
+    y = y + HEADER_TO_DIVIDER_GAP
     dividerTop:ClearAnchors()
     dividerTop:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, y)
     y = y + DIVIDER_GAP
@@ -773,10 +962,18 @@ function Window.Update()
     if showBreakdown then
         local rows = snapshot.categories
         local grandTotal = snapshot.gold
+        local leaderCategoryId, leaderGold
+        for i = 1, #rows do
+            if not leaderCategoryId or rows[i].gold > leaderGold then
+                leaderCategoryId = rows[i].id
+                leaderGold = rows[i].gold
+            end
+        end
         for i = 1, #rows do
             local data = rows[i]
             local row = AcquireRow(i)
             row.data = data
+            row.leaderMarker:SetHidden(data.id ~= leaderCategoryId)
             -- Optional profession icon + name + the category's share of the grand
             -- total, so it reads "[icon] Blacksmithing 42%" at a glance. Guard
             -- against a zero total (an all-unpriced bag) so the share is simply
@@ -809,12 +1006,14 @@ function Window.Update()
     -- Hide any pooled rows left over from a previous (larger) render.
     for i = rowCount + 1, #rowPool do
         rowPool[i].container:SetHidden(true)
+        rowPool[i].leaderMarker:SetHidden(true)
     end
 
     dividerTop:SetHidden(not showBreakdown or rowCount == 0)
     if not showBreakdown or rowCount == 0 then
         -- Collapse the header divider's gap when there is no breakdown to show.
-        y = PADDING + TITLE_HEIGHT + SECTION_GAP + TOTAL_HEIGHT + SUBTITLE_HEIGHT + SECTION_GAP
+        y = PADDING + TITLE_HEIGHT + TITLE_TO_TOTAL_GAP + TOTAL_HEIGHT
+            + TOTAL_TO_SUBTITLE_GAP + SUBTITLE_HEIGHT + HEADER_TO_DIVIDER_GAP
     end
 
     -- Footer block: bottom divider + the info rows (two-column label -> value).
@@ -823,8 +1022,12 @@ function Window.Update()
     dividerBottom:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, y)
     y = y + DIVIDER_GAP
 
-    footerUpdatedRow.container:ClearAnchors()
-    footerUpdatedRow.container:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, y)
+    footerInventoryRow.container:ClearAnchors()
+    footerInventoryRow.container:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, y)
+    y = y + FOOTER_LINE
+
+    footerPriceRefreshRow.container:ClearAnchors()
+    footerPriceRefreshRow.container:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, y)
     y = y + FOOTER_LINE
 
     footerPricesRow.container:ClearAnchors()
@@ -838,6 +1041,12 @@ function Window.Update()
     footerDeltaRow.container:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, y)
     local delta = snapshot.delta
     if delta and delta ~= 0 then
+        y = y + FOOTER_LINE
+    end
+
+    footerGuidanceRow.container:ClearAnchors()
+    footerGuidanceRow.container:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, y)
+    if not footerGuidanceRow.container:IsHidden() then
         y = y + FOOTER_LINE
     end
 
@@ -878,6 +1087,13 @@ function Window.Update()
         sparkContainer:SetHidden(true)
         sparkScaleLabel:SetHidden(true)
     end
+
+    -- Release metadata is intentionally last: it stays visible for support and
+    -- testing, but never competes with the bag value or operational summary.
+    y = y + VERSION_GAP
+    versionLabel:ClearAnchors()
+    versionLabel:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, y)
+    y = y + FOOTER_LINE
 
     windowControl:SetHeight(y + PADDING)
 end
@@ -967,6 +1183,12 @@ function Window.ApplyWidth()
     if profileLabel then
         profileLabel:SetWidth(width * 0.55)
     end
+    if subtitleLabel then
+        subtitleLabel:SetWidth(innerWidth)
+    end
+    if versionLabel then
+        versionLabel:SetWidth(innerWidth)
+    end
     if dividerBottom then
         dividerBottom:SetWidth(innerWidth)
     end
@@ -980,7 +1202,7 @@ function Window.ApplyWidth()
         for i = 1, #rowPool do
             local row = rowPool[i]
             row.container:SetWidth(innerWidth)
-            row.name:SetWidth(width * 0.5)
+            row.name:SetWidth(width * 0.5 - LEADER_MARKER_WIDTH - 5)
             row.gold:SetWidth(width * 0.5 - PADDING)
         end
     end
@@ -994,9 +1216,14 @@ function Window.ApplyWidth()
         row.label:SetWidth(width * 0.4)
         row.value:SetWidth(width * 0.6 - PADDING)
     end
-    ResizeFooterRow(footerUpdatedRow)
+    ResizeFooterRow(footerInventoryRow)
+    ResizeFooterRow(footerPriceRefreshRow)
     ResizeFooterRow(footerPricesRow)
     ResizeFooterRow(footerDeltaRow)
+    if footerGuidanceRow then
+        footerGuidanceRow.container:SetWidth(innerWidth)
+        footerGuidanceRow.label:SetWidth(innerWidth - 16)
+    end
 
     Window.Update()
 end

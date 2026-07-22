@@ -276,8 +276,12 @@ local visitFinalizePending = false  -- an open is waiting to finalize its delta/
 -- Forward-declared: StartPriceRetry (defined above FinalizeVisit) calls it from
 -- its timer callback once the last unpriced slot heals or the budget is spent.
 local FinalizeVisit
+local UpdatePriceHistoryBaselines
 
-local lastScanTimeMs = nil  -- GetGameTimeMilliseconds() of the last full/partial recompute
+local lastInventoryUpdateMs = nil  -- GetGameTimeMilliseconds() of the last inventory valuation
+local lastPriceRefreshMs = nil     -- GetGameTimeMilliseconds() of the last LibPrice lookup
+local priceHistoryUpdatePending = false
+local priceLookupItemIds = {}      -- itemIds queried from LibPrice in the current pass
 local isDirty = true        -- valuation may be stale; rescan on next show
 local isBagVisible = false
 
@@ -366,6 +370,9 @@ local function GetUnitPrice(itemId, itemLink)
         return cached or 0, cached ~= false, priceSource[itemId]
     end
 
+    priceHistoryUpdatePending = true
+    priceLookupItemIds[itemId] = true
+    lastPriceRefreshMs = GetGameTimeMilliseconds()
     local gold, sourceKey = LibPrice.ItemLinkToPriceGold(itemLink)
     if gold and gold > 0 then
         priceCache[itemId] = gold
@@ -519,8 +526,9 @@ local function FullRescan()
         slotIndex = ZO_GetNextBagSlotIndex(BAG, slotIndex)
     end
 
-    lastScanTimeMs = GetGameTimeMilliseconds()
+    lastInventoryUpdateMs = GetGameTimeMilliseconds()
     isDirty = false
+    UpdatePriceHistoryBaselines()
     LogInfo(SI_BMW_LOG_RESCAN_DONE, scanned, ZO_LocalizeDecimalNumber(zo_round(grandGold)))
 end
 
@@ -536,6 +544,13 @@ local function RefreshWindow()
     local detail = addon.DetailWindow
     if detail and detail.Refresh then
         detail.Refresh()
+    end
+
+    -- The queue keeps craft-bag slot references, so reconcile its visible rows
+    -- after inventory changes as well. This is a no-op while it is hidden.
+    local withdrawDialog = addon.WithdrawDialog
+    if withdrawDialog and withdrawDialog.Refresh then
+        withdrawDialog.Refresh()
     end
 end
 
@@ -586,8 +601,9 @@ local function RepriceUnpricedSlots()
     end
 
     if healed > 0 then
-        lastScanTimeMs = GetGameTimeMilliseconds()
+        lastInventoryUpdateMs = GetGameTimeMilliseconds()
     end
+    UpdatePriceHistoryBaselines()
     return healed
 end
 
@@ -652,7 +668,8 @@ local function OnSingleSlotUpdate(eventCode, bagId, slotIndex, isNewItem, soundC
     RemoveSlotFromAggregates(slotIndex)
     local info = ComputeSlot(slotIndex)
     AddSlotToAggregates(slotIndex, info)
-    lastScanTimeMs = GetGameTimeMilliseconds()
+    lastInventoryUpdateMs = GetGameTimeMilliseconds()
+    UpdatePriceHistoryBaselines()
     LogDebug(SI_BMW_LOG_SLOT_UPDATED, slotIndex, ZO_LocalizeDecimalNumber(zo_round(info and info.value or 0)))
 
     QueueWindowRefresh()
@@ -869,7 +886,7 @@ end
 --     gold, slots, stacks, items, unpricedSlots,  -- bag-wide rollup
 --     delta,                                       -- gold change since last visit (or nil)
 --     sourceName, sourceHasOthers,                 -- dominant price source for the footer
---     lastScanTimeMs,                              -- when the data was last computed
+--     lastInventoryUpdateMs, lastPriceRefreshMs,    -- valuation and price freshness
 --     categories = { { id, name, gold, slots, stacks, items, unpricedSlots }, ... }
 --   }
 -- `slots` is occupied craft-bag slots (distinct materials); `stacks` is the
@@ -923,7 +940,8 @@ function Valuation.GetSnapshot(sortByValue)
         sourceName = sourceName,
         sourceShort = sourceShort,
         sourceHasOthers = sourceHasOthers,
-        lastScanTimeMs = lastScanTimeMs,
+        lastInventoryUpdateMs = lastInventoryUpdateMs,
+        lastPriceRefreshMs = lastPriceRefreshMs,
         categories = categories,
     }
 end
@@ -961,9 +979,9 @@ end
 -- How many items of `itemId` the backpack can currently absorb, used by the
 -- withdraw dialog to show the max-withdrawable figure and to clamp the requested
 -- quantity. It is the sum of two things:
---   1. the room left in any partial stack of the same item already in the
---      backpack (each capped at STACK_SIZE), since a withdrawal tops those up
---      before consuming an empty slot, and
+--   1. the room left in the first partial stack of the same item already in the
+--      backpack, since the withdrawal engine targets that stack before using
+--      empty slots, and
 --   2. STACK_SIZE for every free backpack slot (each can hold a fresh 200).
 -- Read-only: it scans BAG_BACKPACK but touches none of the craft-bag aggregates.
 -- The caller clamps this against the craft-bag source stack, so the returned
@@ -973,7 +991,7 @@ function Valuation.GetBackpackCapacityFor(itemId)
         return 0
     end
 
-    local capacity = 0
+    local partialCapacity = 0
     local slotIndex = ZO_GetNextBagSlotIndex(BAG_BACKPACK)
     while slotIndex do
         if GetItemId(BAG_BACKPACK, slotIndex) == itemId then
@@ -982,14 +1000,26 @@ function Valuation.GetBackpackCapacityFor(itemId)
             -- room to top up, so it contributes nothing here (it's not "free
             -- capacity", unlike the free-slot count added below).
             if size and size > 0 and size < STACK_SIZE then
-                capacity = capacity + (STACK_SIZE - size)
+                partialCapacity = STACK_SIZE - size
+                break
             end
         end
         slotIndex = ZO_GetNextBagSlotIndex(BAG_BACKPACK, slotIndex)
     end
 
-    capacity = capacity + GetNumBagFreeSlots(BAG_BACKPACK) * STACK_SIZE
-    return capacity
+    return partialCapacity + GetNumBagFreeSlots(BAG_BACKPACK) * STACK_SIZE
+end
+
+-- Current price metadata for a live craft-bag slot. The withdrawal queue keeps
+-- its own display rows, so it uses this narrow lookup during refresh instead of
+-- retaining a stale price copied when the item was queued.
+function Valuation.GetMaterialPrice(itemId, slotIndex)
+    local info = slotInfo[slotIndex]
+    if not info or info.itemId ~= itemId then
+        return nil, false, nil
+    end
+    local unitPrice = info.stack and info.stack > 0 and (info.value / info.stack) or 0
+    return unitPrice, info.priced == true, info.source
 end
 
 -- Detail-window data + price history
@@ -999,25 +1029,25 @@ end
 -- display fields (name/icon/quality) lazily from the item link and folds in a
 -- price-change figure from the persisted baseline.
 
--- Read the persisted baseline for an itemId and, if it is stale (or missing),
--- advance it to the current price. Returns growthPercent, growthDir (true =
--- up/flat, false = down) and isNew (no prior baseline) for display. Read of the
--- old value happens BEFORE the write so the very session that records a new
--- baseline still shows the change against the previous one.
+-- Price changes captured when a price lookup refreshed a material. Keeping this
+-- transient result lets the UI show the just-observed change even though the
+-- persisted baseline has already advanced for the next comparison interval.
+local priceGrowthCache = {}  -- [itemId] = { unitPrice, growthPercent, growthDir, isNew }
+
+-- Read a persisted baseline without changing it. Row building must be pure: a
+-- search, sort, or category open should never alter the user's price history.
 local function ResolvePriceGrowth(itemId, curUnit)
     local sv = private.savedVars
     if not sv or not curUnit or curUnit <= 0 then
         return nil, nil, false
     end
 
-    local history = sv.priceHistory
-    if not history then
-        history = {}
-        sv.priceHistory = history
+    local cached = priceGrowthCache[itemId]
+    if cached and cached.unitPrice == curUnit then
+        return cached.growthPercent, cached.growthDir, cached.isNew
     end
 
-    local now = GetTimeStamp()
-    local old = history[itemId]
+    local old = sv.priceHistory and sv.priceHistory[itemId]
 
     local growthPercent, growthDir, isNew
     if old and old.p and old.p > 0 then
@@ -1028,14 +1058,55 @@ local function ResolvePriceGrowth(itemId, curUnit)
         isNew = true
     end
 
-    -- Advance the baseline only when there is none yet or the existing one has
-    -- aged past the record interval, so the displayed % reflects day-over-day
-    -- drift rather than "since I opened the bag moments ago".
-    if not old or not old.t or (now - old.t) >= RECORD_INTERVAL_SECONDS then
-        history[itemId] = { p = zo_round(curUnit), t = now }
+    return growthPercent, growthDir, isNew
+end
+
+-- Advance stale price baselines only after LibPrice was actually queried. This
+-- decouples price-history writes from opening/sorting the detail window while
+-- preserving the observed change for the current UI refresh in priceGrowthCache.
+UpdatePriceHistoryBaselines = function()
+    if not priceHistoryUpdatePending then
+        return
+    end
+    priceHistoryUpdatePending = false
+    local lookupItemIds = priceLookupItemIds
+    priceLookupItemIds = {}
+
+    local sv = private.savedVars
+    if not sv then
+        return
+    end
+    local history = sv.priceHistory
+    if not history then
+        history = {}
+        sv.priceHistory = history
     end
 
-    return growthPercent, growthDir, isNew
+    local now = GetTimeStamp()
+    for _, info in pairs(slotInfo) do
+        if lookupItemIds[info.itemId] and info.priced and info.stack and info.stack > 0 then
+            local unitPrice = info.value / info.stack
+            local old = history[info.itemId]
+            local growthPercent, growthDir, isNew
+            if old and old.p and old.p > 0 then
+                growthPercent = (unitPrice - old.p) / old.p * 100
+                growthDir = unitPrice >= old.p
+                isNew = false
+            else
+                isNew = true
+            end
+            priceGrowthCache[info.itemId] = {
+                unitPrice = unitPrice,
+                growthPercent = growthPercent,
+                growthDir = growthDir,
+                isNew = isNew,
+            }
+
+            if not old or not old.t or (now - old.t) >= RECORD_INTERVAL_SECONDS then
+                history[info.itemId] = { p = zo_round(unitPrice), t = now }
+            end
+        end
+    end
 end
 
 -- Build one display row from a slot's cached info. Resolves the heavier display
@@ -1113,6 +1184,20 @@ function Valuation.GetCategoryMaterials(categoryId)
     return materials
 end
 
+-- Per-material rows across the entire Craft Bag. Used by the detail window's
+-- whole-bag coverage view, where there is no category or search query yet the
+-- player still needs the active price filter to operate over every material.
+function Valuation.GetAllMaterials()
+    local materials = {}
+
+    for slotIndex, info in pairs(slotInfo) do
+        materials[#materials + 1] = BuildMaterialRow(slotIndex, info)
+    end
+
+    SortMaterialsByName(materials)
+    return materials
+end
+
 -- Per-material rows across the WHOLE craft bag whose name contains `query`
 -- (case-insensitive substring), for the detail window's search box. Same row
 -- shape and sort as GetCategoryMaterials. An empty/nil query returns nothing, so
@@ -1139,9 +1224,10 @@ end
 
 -- Snapshot + diff
 -- ---------------------------------------------------------------------------
--- A manual, single snapshot of the craft bag's composition, frozen on demand
--- (the detail window's "Remember" button) and later diffed against the live bag
--- ("Changes"). Stored in savedVars so it survives restarts. Shape:
+-- A single snapshot of the craft bag's composition, captured once automatically
+-- on the first non-empty bag open or explicitly by the detail window's "Remember"
+-- button, then diffed against the live bag ("Changes"). Stored in savedVars so
+-- it survives restarts. Shape:
 --   snapshot = {
 --     t, gold, items, slots,                 -- header captured at Remember time
 --     materials = { [itemId] = { link, name, icon, quality, count, unitPrice,
@@ -1192,7 +1278,7 @@ end
 
 -- Freeze the current bag composition into savedVars, overwriting any prior
 -- snapshot (single-snapshot model). O(slots) with a name/icon resolve per
--- material; runs once per button press, never on the scan path.
+-- material; runs only for the one-time automatic baseline or a Remember click.
 function Valuation.CaptureSnapshot()
     local sv = private.savedVars
     if not sv then

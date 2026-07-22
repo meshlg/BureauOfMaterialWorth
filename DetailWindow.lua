@@ -66,6 +66,8 @@ local function CumulativeColor(percent)
 end
 
 local GOLD_ICON = private.GOLD_ICON
+local FEE_LISTING_RATE = private.FEE_LISTING_RATE
+local FEE_SALES_RATE = private.FEE_SALES_RATE
 -- Same sort-arrow textures Window.lua uses for its delta, for the same reason:
 -- the ESO UI font doesn't render the Unicode triangles reliably.
 local ARROW_UP = "|t16:16:EsoUI/Art/Miscellaneous/list_sortUp.dds|t"
@@ -76,7 +78,9 @@ local ARROW_DOWN = "|t16:16:EsoUI/Art/Miscellaneous/list_sortDown.dds|t"
 local WINDOW_WIDTH = 800   -- widened from 720 for the cumulative-share column
 local PADDING      = 12
 local TITLE_HEIGHT = 26
+local CONTEXT_HEIGHT = 18
 local HEADER_HEIGHT = 20
+local ROW_ACTION_WIDTH = 48
 local DIVIDER_GAP  = 10
 local ROW_HEIGHT   = 26
 local LIST_MAX_ROWS = 16   -- beyond this the list scrolls instead of growing
@@ -152,6 +156,7 @@ end
 local windowControl   -- top-level container
 local backdrop        -- background + border
 local titleLabel      -- "<Category> - materials"
+local contextLabel    -- active category/search/diff scope beneath the title
 local headerName, headerQty, headerValue, headerCum, headerChange  -- column headers
 local divider
 local listControl     -- ZO_ScrollList
@@ -161,11 +166,18 @@ local emptyLabel      -- shown when the category has no materials
 local currentCategoryId  -- remembered so a refresh can rebuild the same view
 local currentCategoryName  -- remembered so the title can restore after a search
 local searchBox       -- the search editbox
+local searchHint      -- placeholder inside the search box
+local searchClearButton -- clears the whole-bag search without touching filters
 local changesButton   -- toolbar button; toggles between "Changes" and "Back"
+local snapshotStatusLabel -- compact persistent state of the saved comparison baseline
+local filterButtons = {} -- { all, priced, unpriced } price-coverage filter controls
+local selectedFilterFrame -- accent outline around the active price filter
+local resetFiltersButton -- clears the active price filter and/or text query
 local searchQuery = ""  -- current search text; "" means "show the category"
 local suppressSearchEvent = false  -- guards the search box against its own SetText
 local currentResultCount = 0  -- rows in the list just built by Populate; feeds the
                               -- search-result counter in the title
+local priceFilter = "all"  -- "all" | "priced" | "unpriced"
 
 -- Which list the window is showing. "category" is the normal per-category table
 -- (with the whole-bag search as a sub-state, driven by searchQuery); "diff" is
@@ -186,7 +198,17 @@ local sortAsc = false
 -- Forward declarations so the search-box handlers built in Initialize can
 -- capture these as upvalues; they are defined (as plain assignments) further
 -- down, after Initialize.
-local FillList, Populate, UpdateTitle, UpdateHeaders
+local FillList, Populate, UpdateTitle, UpdateContext, UpdateHeaders, UpdateColumnLayout, UpdatePriceFilterButtons, UpdateSnapshotStatus
+
+-- The basic table focuses on the immediate inventory decision: what it is, how
+-- much is held, and what it is worth. Analytics adds the Pareto and price-drift
+-- columns. Snapshot comparison always keeps its full delta/share/status layout.
+local function UsesAnalyticsColumns()
+    if viewMode == "diff" then
+        return true
+    end
+    return private.savedVars and private.savedVars.detailColumnMode == "analytics"
+end
 
 -- Coalesce a burst of search keystrokes into a single rebuild. Each keystroke
 -- re-arms the one-shot timer; only the last one within SEARCH_DEBOUNCE_MS fires,
@@ -353,38 +375,125 @@ local function SetupRow(rowControl, data)
         SetupMaterialColumns(rowControl, data)
     end
 
-    -- Bind the interaction handlers once per recycled control (sentinel), then
-    -- let them read rowControl.bmwData at event time. Left click opens the
-    -- withdraw popup for this material; right click adds it to the withdraw
-    -- queue. A hover tooltip spells out both, matching Window.lua's affordance.
+    -- The action buttons occupy a fixed strip at the right edge, preserving the
+    -- column geometry whether they are shown or hidden. Diff rows do not carry a
+    -- live Craft Bag slot, so never offer withdrawal actions for them.
+    local hoverBackdrop = rowControl:GetNamedChild("Hover")
+    hoverBackdrop:SetCenterColor(0.32, 0.32, 0.32, 0.24)
+    hoverBackdrop:SetEdgeColor(0, 0, 0, 0)
+    local withdrawButton = rowControl:GetNamedChild("Withdraw")
+    local queueButton = rowControl:GetNamedChild("Queue")
+    rowControl.bmwRowHovered = false
+    rowControl.bmwActionHovered = false
+    withdrawButton:SetHidden(true)
+    queueButton:SetHidden(true)
+
+    local useAnalytics = UsesAnalyticsColumns()
+    local valueLabel = rowControl:GetNamedChild("Value")
+    valueLabel:ClearAnchors()
+    if useAnalytics then
+        valueLabel:SetAnchor(RIGHT, rowControl:GetNamedChild("Cum"), LEFT, -6, 0)
+    else
+        valueLabel:SetAnchor(RIGHT, queueButton, LEFT, -6, 0)
+    end
+    rowControl:GetNamedChild("Cum"):SetHidden(not useAnalytics)
+    rowControl:GetNamedChild("Change"):SetHidden(not useAnalytics)
+
+    -- Bind action-button handlers once per recycled control (sentinel), then let
+    -- them read rowControl.bmwData at event time. Actions intentionally live only
+    -- on the explicit buttons: clicks on the rest of the row remain non-mutating.
     -- Diff rows carry no source slot (a removed material has none at all), so the
-    -- withdraw actions and hint are guarded on the diff flag at event time.
+    -- buttons and row tooltip are guarded on the diff flag at event time.
     if not rowControl.bmwClickBound then
         rowControl.bmwClickBound = true
 
-        rowControl:SetHandler("OnMouseUp", function(self, button, upInside)
-            if not upInside then
-                return
+        local actionHideTimer = rowControl:GetName() .. "_ActionHide"
+
+        local function ShowActionTooltip(control, stringId)
+            InitializeTooltip(InformationTooltip, control, BOTTOM, 0, -2, TOP)
+            InformationTooltip:AddLine(GetString(stringId), "ZoFontGame", 0.78, 0.77, 0.72)
+        end
+
+        local function CancelActionHide()
+            EVENT_MANAGER:UnregisterForUpdate(actionHideTimer)
+        end
+
+        local function ShowActions()
+            CancelActionHide()
+            rowControl:GetNamedChild("Withdraw"):SetHidden(false)
+            rowControl:GetNamedChild("Queue"):SetHidden(false)
+        end
+
+        -- Moving onto a child button triggers OnMouseExit for the row in ESO.
+        -- Defer hiding briefly and let either button cancel that pending hide, so
+        -- the controls stay stable while the pointer crosses the boundary.
+        local function QueueActionHide()
+            CancelActionHide()
+            EVENT_MANAGER:RegisterForUpdate(actionHideTimer, 75, function()
+                EVENT_MANAGER:UnregisterForUpdate(actionHideTimer)
+                if not rowControl.bmwRowHovered and not rowControl.bmwActionHovered then
+                    rowControl:GetNamedChild("Withdraw"):SetHidden(true)
+                    rowControl:GetNamedChild("Queue"):SetHidden(true)
+                end
+            end)
+        end
+
+        -- Use the familiar game accept/plus iconography rather than tiny text
+        -- buttons. The actions are discoverable on hover and replace the former
+        -- hidden left/right-click gestures on the row itself.
+        local withdrawButton = rowControl:GetNamedChild("Withdraw")
+        withdrawButton:SetNormalTexture("EsoUI/Art/Buttons/accept_up.dds")
+        withdrawButton:SetMouseOverTexture("EsoUI/Art/Buttons/accept_over.dds")
+        withdrawButton:SetPressedTexture("EsoUI/Art/Buttons/accept_down.dds")
+        withdrawButton:SetHandler("OnClicked", function(self)
+            local rowData = self:GetParent().bmwData
+            if rowData and not rowData.diff and addon.WithdrawDialog then
+                addon.WithdrawDialog.Open(rowData)
             end
-            local rowData = self.bmwData
-            local withdraw = addon.WithdrawDialog
-            if not rowData or rowData.diff or not withdraw then
-                return
+        end)
+        withdrawButton:SetHandler("OnMouseEnter", function(self)
+            rowControl.bmwActionHovered = true
+            CancelActionHide()
+            ShowActionTooltip(self, SI_BMW_DETAIL_ACTION_WITHDRAW_TOOLTIP)
+        end)
+        withdrawButton:SetHandler("OnMouseExit", function()
+            rowControl.bmwActionHovered = false
+            ClearTooltip(InformationTooltip)
+            QueueActionHide()
+        end)
+
+        local queueButton = rowControl:GetNamedChild("Queue")
+        queueButton:SetNormalTexture("EsoUI/Art/Buttons/plus_up.dds")
+        queueButton:SetMouseOverTexture("EsoUI/Art/Buttons/plus_over.dds")
+        queueButton:SetPressedTexture("EsoUI/Art/Buttons/plus_down.dds")
+        queueButton:SetHandler("OnClicked", function(self)
+            local rowData = self:GetParent().bmwData
+            if rowData and not rowData.diff and addon.WithdrawDialog then
+                addon.WithdrawDialog.AddToQueue(rowData)
             end
-            if button == MOUSE_BUTTON_INDEX_LEFT then
-                withdraw.Open(rowData)
-            elseif button == MOUSE_BUTTON_INDEX_RIGHT then
-                withdraw.AddToQueue(rowData)
-            end
+        end)
+        queueButton:SetHandler("OnMouseEnter", function(self)
+            rowControl.bmwActionHovered = true
+            CancelActionHide()
+            ShowActionTooltip(self, SI_BMW_DETAIL_ACTION_QUEUE_TOOLTIP)
+        end)
+        queueButton:SetHandler("OnMouseExit", function()
+            rowControl.bmwActionHovered = false
+            ClearTooltip(InformationTooltip)
+            QueueActionHide()
         end)
 
         rowControl:SetHandler("OnMouseEnter", function(self)
+            self.bmwRowHovered = true
             local rowData = self.bmwData
             -- Diff rows carry a different shape (deltas/status, no source slot) and
             -- no withdraw affordance, so they get no hover tooltip.
             if not rowData or rowData.diff then
                 return
             end
+
+            self:GetNamedChild("Hover"):SetHidden(false)
+            ShowActions()
 
             InitializeTooltip(InformationTooltip, self, BOTTOM, 0, -2, TOP)
 
@@ -395,9 +504,10 @@ local function SetupRow(rowControl, data)
                 "ZoFontHeader2", 0.86, 0.85, 0.78)
             ZO_Tooltip_AddDivider(InformationTooltip)
 
-            -- The figures already computed for the columns, spelled out. Quantity
-            -- always applies; the price lines only when the material is priced,
-            -- otherwise a single "no price" line so the row never looks broken.
+            -- Value block: stock, market price, explicit guild-trader deductions,
+            -- and take-home amount. Technical provenance follows in its own block.
+            InformationTooltip:AddLine(GetString(SI_BMW_ROW_TOOLTIP_VALUE_SECTION),
+                "ZoFontWinH5", 0.44, 0.80, 0.62)
             InformationTooltip:AddLine(stringformat(GetString(SI_BMW_ROW_TOOLTIP_QTY),
                 ZO_LocalizeDecimalNumber(rowData.count or 0)), "ZoFontGame", 0.78, 0.77, 0.72)
 
@@ -406,35 +516,43 @@ local function SetupRow(rowControl, data)
                     FormatGold(rowData.unitPrice)), "ZoFontGame", 0.78, 0.77, 0.72)
                 InformationTooltip:AddLine(stringformat(GetString(SI_BMW_ROW_TOOLTIP_TOTAL),
                     FormatGold(rowData.gold)), "ZoFontGame", 0.78, 0.77, 0.72)
-                -- Net for this stack after the guild-store fees (1% + 7%), the
-                -- take-home if sold through a trader. Muted green marks it as the
-                -- net figure, matching the grand-total hover on the main panel.
+                InformationTooltip:AddLine(stringformat(GetString(SI_BMW_ROW_TOOLTIP_LISTING_FEE),
+                    FormatGold(rowData.gold * FEE_LISTING_RATE)), "ZoFontGame", 0.82, 0.56, 0.37)
+                InformationTooltip:AddLine(stringformat(GetString(SI_BMW_ROW_TOOLTIP_SALES_TAX),
+                    FormatGold(rowData.gold * FEE_SALES_RATE)), "ZoFontGame", 0.82, 0.56, 0.37)
                 InformationTooltip:AddLine(stringformat(GetString(SI_BMW_ROW_TOOLTIP_NET),
                     FormatGold(private.NetAfterFees(rowData.gold))), "ZoFontGame", 0.44, 0.80, 0.62)
+            else
+                InformationTooltip:AddLine(GetString(SI_BMW_ROW_TOOLTIP_UNPRICED),
+                    "ZoFontGame", 0.82, 0.56, 0.37)
+            end
+
+            if rowData.priced and rowData.unitPrice and rowData.unitPrice > 0 then
                 local sourceName = rowData.source and addon.Valuation.GetSourceDisplayName(rowData.source)
+                local growthText = FormatGrowthText(rowData)
+                if sourceName or growthText then
+                    ZO_Tooltip_AddDivider(InformationTooltip)
+                    InformationTooltip:AddLine(GetString(SI_BMW_ROW_TOOLTIP_TECHNICAL_SECTION),
+                        "ZoFontWinH5", 0.44, 0.80, 0.62)
+                end
                 if sourceName then
                     InformationTooltip:AddLine(stringformat(GetString(SI_BMW_ROW_TOOLTIP_SOURCE),
                         sourceName), "ZoFontGame", 0.78, 0.77, 0.72)
                 end
                 -- Price-change line, only when there's a comparable figure (shares
                 -- the arrow+color idiom of the Change column via FormatGrowthText).
-                local growthText = FormatGrowthText(rowData)
                 if growthText then
                     InformationTooltip:AddLine(stringformat(GetString(SI_BMW_ROW_TOOLTIP_CHANGE),
                         growthText), "ZoFontGame", 0.78, 0.77, 0.72)
                 end
-            else
-                InformationTooltip:AddLine(GetString(SI_BMW_ROW_TOOLTIP_UNPRICED),
-                    "ZoFontGame", 0.82, 0.56, 0.37)
             end
 
-            -- Interaction hint last, set off by a divider so it reads as a footer.
-            ZO_Tooltip_AddDivider(InformationTooltip)
-            InformationTooltip:AddLine(GetString(SI_BMW_WITHDRAW_HINT),
-                "ZoFontGameSmall", 0.55, 0.79, 0.62)
         end)
-        rowControl:SetHandler("OnMouseExit", function()
+        rowControl:SetHandler("OnMouseExit", function(self)
+            self.bmwRowHovered = false
+            self:GetNamedChild("Hover"):SetHidden(true)
             ClearTooltip(InformationTooltip)
+            QueueActionHide()
         end)
     end
 end
@@ -452,8 +570,22 @@ function DetailWindow.Initialize()
     windowControl:SetHidden(true)
     windowControl:SetMouseEnabled(true)
     windowControl:SetMovable(true)
-    -- Center on first show; the user can drag it from there.
-    windowControl:SetAnchor(CENTER, GuiRoot, CENTER, 0, 0)
+    -- Restore the player's last placement. A new installation has no saved
+    -- coordinates, so it starts centered once and then remembers drag stops.
+    local savedVars = private.savedVars or {}
+    if savedVars.detailWindowLeft and savedVars.detailWindowTop then
+        windowControl:SetAnchor(TOPLEFT, GuiRoot, TOPLEFT,
+            savedVars.detailWindowLeft, savedVars.detailWindowTop)
+    else
+        windowControl:SetAnchor(CENTER, GuiRoot, CENTER, 0, 0)
+    end
+    windowControl:SetHandler("OnMoveStop", function(self)
+        local vars = private.savedVars
+        if vars then
+            vars.detailWindowLeft = zo_round(self:GetLeft())
+            vars.detailWindowTop = zo_round(self:GetTop())
+        end
+    end)
 
     -- Confirmation dialog for the destructive "Clear snapshot" action. Registered
     -- once; the accept callback does the actual clear so a stray button click only
@@ -468,6 +600,7 @@ function DetailWindow.Initialize()
                 callback = function()
                     addon.Valuation.ClearSnapshot()
                     private.ChatInfo(SI_BMW_MSG_SNAPSHOT_CLEARED)
+                    UpdateSnapshotStatus()
                     -- Refresh the diff view in place so it drops to the "press
                     -- Remember" empty state immediately after the clear.
                     if viewMode == "diff" then
@@ -495,10 +628,22 @@ function DetailWindow.Initialize()
     titleLabel:SetMaxLineCount(1)
     titleLabel:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
     titleLabel:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, PADDING)
-    -- The title now has its own row (only the close button shares it), so it can
-    -- run the full width up to the close button. The buttons + search sit on a
-    -- second toolbar row below (see TOOLBAR_GAP / toolbarY).
+    -- The title has its own row (only the close button shares it), so it can run
+    -- the full width up to the close button. Snapshot actions and list filters
+    -- occupy their own toolbar rows below.
     titleLabel:SetDimensions(WINDOW_WIDTH - PADDING * 2 - 32 - 8, TITLE_HEIGHT)
+
+    -- A persistent, muted scope line makes the active representation explicit:
+    -- category vs whole-bag search vs snapshot comparison. The title stays short
+    -- and scannable while this line carries result count, price filter, or age.
+    contextLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_DetailContext", windowControl, CT_LABEL)
+    contextLabel:SetFont("ZoFontGameSmall")
+    contextLabel:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
+    contextLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+    contextLabel:SetMaxLineCount(1)
+    contextLabel:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+    contextLabel:SetDimensions(WINDOW_WIDTH - PADDING * 2, CONTEXT_HEIGHT)
+    contextLabel:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, PADDING + TITLE_HEIGHT)
 
     -- Close button (built-in virtual) anchored top-right.
     local closeButton = WINDOW_MANAGER:CreateControlFromVirtual(
@@ -508,12 +653,13 @@ function DetailWindow.Initialize()
         DetailWindow.Hide()
     end)
 
-    -- Second toolbar row, below the title/close row: snapshot buttons on the left,
-    -- the whole-bag search box on the right. Splitting these off the title row
-    -- gives each element room to breathe (the single-row layout was cramped at
-    -- width 800). TOOLBAR_GAP is the vertical air between the two rows.
+    -- Two distinct toolbar rows keep snapshot actions separate from list filters:
+    -- the first owns Remember / Changes / Clear, the second owns price coverage
+    -- filters and whole-bag search. TOOLBAR_GAP provides the vertical air between
+    -- each row and the surrounding controls.
     local TOOLBAR_GAP = 6
-    local toolbarY = PADDING + TITLE_HEIGHT + TOOLBAR_GAP
+    local snapshotToolbarY = PADDING + TITLE_HEIGHT + CONTEXT_HEIGHT + TOOLBAR_GAP
+    local filterToolbarY = snapshotToolbarY + TITLE_HEIGHT + TOOLBAR_GAP
 
     -- Search box (whole-bag). Typing here switches the list to materials matching
     -- the query across every category; clearing it returns to the opened category.
@@ -522,7 +668,7 @@ function DetailWindow.Initialize()
         addon.name .. "_DetailSearchBg", windowControl, "ZO_DefaultBackdrop")
     searchBg:SetDimensions(SEARCH_WIDTH, TITLE_HEIGHT)
     searchBg:ClearAnchors()
-    searchBg:SetAnchor(TOPRIGHT, windowControl, TOPRIGHT, -PADDING, toolbarY)
+    searchBg:SetAnchor(TOPRIGHT, windowControl, TOPRIGHT, -PADDING, filterToolbarY)
     -- Clicking anywhere on the backdrop (incl. its padding) focuses the editbox,
     -- so the hit target is the whole field, not just the text glyphs.
     searchBg:SetMouseEnabled(true)
@@ -535,7 +681,7 @@ function DetailWindow.Initialize()
     -- Faint placeholder shown only while the box is empty. Created BEFORE the
     -- editbox (so the editbox is the top-most sibling for mouse hits) and with
     -- mouse explicitly disabled so it never intercepts clicks meant for the box.
-    local searchHint = WINDOW_MANAGER:CreateControl(addon.name .. "_DetailSearchHint", searchBg, CT_LABEL)
+    searchHint = WINDOW_MANAGER:CreateControl(addon.name .. "_DetailSearchHint", searchBg, CT_LABEL)
     searchHint:SetFont("ZoFontGame")
     searchHint:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     searchHint:SetAnchor(LEFT, searchBg, LEFT, 8, 0)
@@ -565,6 +711,7 @@ function DetailWindow.Initialize()
             QueueSearch()
         end
         searchHint:SetHidden((searchBox:GetText() or "") ~= "")
+        UpdatePriceFilterButtons()
     end)
     -- Escape clears the search and drops focus, returning to the category view.
     searchBox:SetHandler("OnEscape", function(self)
@@ -572,12 +719,48 @@ function DetailWindow.Initialize()
         self:LoseFocus()
     end)
 
+    searchClearButton = WINDOW_MANAGER:CreateControlFromVirtual(
+        addon.name .. "_DetailSearchClear", windowControl, "ZO_CloseButton")
+    searchClearButton:SetDimensions(20, 20)
+    searchClearButton:SetAnchor(RIGHT, searchBg, LEFT, -4, 0)
+    searchClearButton:SetHandler("OnClicked", function()
+        suppressSearchEvent = true
+        searchBox:SetText("")
+        suppressSearchEvent = false
+        searchQuery = ""
+        searchHint:SetHidden(false)
+        UpdatePriceFilterButtons()
+        Populate()
+        searchBox:TakeFocus()
+    end)
+    searchClearButton:SetHandler("OnMouseEnter", function(self)
+        InitializeTooltip(InformationTooltip, self, BOTTOM, 0, -2, TOP)
+        InformationTooltip:AddLine(GetString(SI_BMW_DETAIL_SEARCH_CLEAR_TOOLTIP),
+            "ZoFontGame", 0.78, 0.77, 0.72)
+    end)
+    searchClearButton:SetHandler("OnMouseExit", function()
+        ClearTooltip(InformationTooltip)
+    end)
+    searchClearButton:SetHidden(true)
+
     -- Snapshot buttons on the left of the toolbar row. "Remember" freezes the
     -- current composition; "Changes" switches to the diff view. ZO_DefaultButton's
     -- virtual height (~30) is taller than the 26px row, so force the height. Each
     -- gets a title+body hover tooltip (the headerCum idiom) since the
     -- manual-snapshot model is not self-evident.
     local BUTTON_WIDTH = 100
+    local GROUP_LABEL_WIDTH = 62
+    local GROUP_LABEL_GAP = 8
+
+    local snapshotGroupLabel = WINDOW_MANAGER:CreateControl(
+        addon.name .. "_DetailSnapshotGroupLabel", windowControl, CT_LABEL)
+    snapshotGroupLabel:SetFont("ZoFontGameSmall")
+    snapshotGroupLabel:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
+    snapshotGroupLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+    snapshotGroupLabel:SetDimensions(GROUP_LABEL_WIDTH, TITLE_HEIGHT)
+    snapshotGroupLabel:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, snapshotToolbarY)
+    snapshotGroupLabel:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_DETAIL_GROUP_SNAPSHOT)))
+
     local function WireButtonTooltip(button, titleId, bodyId)
         button:SetHandler("OnMouseEnter", function(self)
             InitializeTooltip(InformationTooltip, self, BOTTOM, 0, -2, TOP)
@@ -593,7 +776,7 @@ function DetailWindow.Initialize()
     local rememberButton = WINDOW_MANAGER:CreateControlFromVirtual(
         addon.name .. "_DetailRemember", windowControl, "ZO_DefaultButton")
     rememberButton:SetDimensions(BUTTON_WIDTH, TITLE_HEIGHT)
-    rememberButton:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, toolbarY)
+    rememberButton:SetAnchor(LEFT, snapshotGroupLabel, RIGHT, GROUP_LABEL_GAP, 0)
     rememberButton:SetText(GetString(SI_BMW_DETAIL_BTN_REMEMBER))
     rememberButton:SetHandler("OnClicked", function()
         local snapshot = addon.Valuation.CaptureSnapshot()
@@ -603,6 +786,7 @@ function DetailWindow.Initialize()
             private.ChatInfo(SI_BMW_MSG_SNAPSHOT_SAVED, snapshot.slots or 0,
                 ZO_LocalizeDecimalNumber(zo_round(snapshot.gold or 0)))
         end
+        UpdateSnapshotStatus()
         -- If the diff view is open, refresh it so it reflects the new baseline
         -- (it will now read "nothing changed"); otherwise just leave it.
         if viewMode == "diff" then
@@ -645,10 +829,9 @@ function DetailWindow.Initialize()
     end)
 
     -- "Clear" forgets the saved snapshot. Sits after "Changes" on the toolbar.
-    -- No modal confirm: "Remember" already overwrites the snapshot without one, so
-    -- requiring confirmation only here would be inconsistent; the hover tooltip
-    -- carries the "cannot be undone" warning. When the diff view is open, clearing
-    -- refreshes it so it drops to the "press Remember" empty state immediately.
+    -- Because clearing is destructive and cannot be undone, it opens a confirmation
+    -- dialog. When the diff view is open, a confirmed clear refreshes it into the
+    -- "press Remember" empty state immediately.
     local clearButton = WINDOW_MANAGER:CreateControlFromVirtual(
         addon.name .. "_DetailClear", windowControl, "ZO_DefaultButton")
     clearButton:SetDimensions(BUTTON_WIDTH, TITLE_HEIGHT)
@@ -662,15 +845,95 @@ function DetailWindow.Initialize()
     WireButtonTooltip(clearButton, SI_BMW_DETAIL_BTN_CLEAR_TOOLTIP_TITLE,
         SI_BMW_DETAIL_BTN_CLEAR_TOOLTIP_BODY)
 
+    -- Keep the automatic baseline visible beside its controls instead of making
+    -- players infer it from a tooltip or from the Changes view.
+    snapshotStatusLabel = WINDOW_MANAGER:CreateControl(
+        addon.name .. "_DetailSnapshotStatus", windowControl, CT_LABEL)
+    snapshotStatusLabel:SetFont("ZoFontGameSmall")
+    snapshotStatusLabel:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
+    snapshotStatusLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+    snapshotStatusLabel:SetMaxLineCount(1)
+    snapshotStatusLabel:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+    snapshotStatusLabel:SetAnchor(LEFT, clearButton, RIGHT, 10, 0)
+    snapshotStatusLabel:SetDimensions(WINDOW_WIDTH - (PADDING * 2 + GROUP_LABEL_WIDTH
+        + GROUP_LABEL_GAP + BUTTON_WIDTH * 3 + 26), TITLE_HEIGHT)
+
+    -- Price coverage filters live on their own row beside the search box. They
+    -- filter the current category/search view and are hidden for the snapshot
+    -- diff, where priced/unpriced has a different meaning.
+    local filterGroupLabel = WINDOW_MANAGER:CreateControl(
+        addon.name .. "_DetailFilterGroupLabel", windowControl, CT_LABEL)
+    filterGroupLabel:SetFont("ZoFontGameSmall")
+    filterGroupLabel:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
+    filterGroupLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+    filterGroupLabel:SetDimensions(GROUP_LABEL_WIDTH, TITLE_HEIGHT)
+    filterGroupLabel:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, filterToolbarY)
+    filterGroupLabel:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_DETAIL_GROUP_FILTER)))
+
+    local FILTER_BUTTON_GAP = 4
+    local filterDefinitions = {
+        { key = "all", stringId = SI_BMW_DETAIL_FILTER_ALL, width = 44 },
+        { key = "priced", stringId = SI_BMW_DETAIL_FILTER_PRICED, width = 68 },
+        { key = "unpriced", stringId = SI_BMW_DETAIL_FILTER_UNPRICED, width = 84 },
+    }
+    local previousFilterButton = nil
+    for i = 1, #filterDefinitions do
+        local definition = filterDefinitions[i]
+        local button = WINDOW_MANAGER:CreateControlFromVirtual(
+            addon.name .. "_DetailFilter" .. definition.key, windowControl, "ZO_DefaultButton")
+        button:SetDimensions(definition.width, TITLE_HEIGHT)
+        if previousFilterButton then
+            button:SetAnchor(TOPLEFT, previousFilterButton, TOPRIGHT, FILTER_BUTTON_GAP, 0)
+        else
+            button:SetAnchor(LEFT, filterGroupLabel, RIGHT, GROUP_LABEL_GAP, 0)
+        end
+        button:SetText(GetString(definition.stringId))
+        button:SetHandler("OnClicked", function()
+            if priceFilter ~= definition.key then
+                priceFilter = definition.key
+                UpdatePriceFilterButtons()
+                Populate()
+            end
+        end)
+        filterButtons[definition.key] = button
+        previousFilterButton = button
+    end
+
+    selectedFilterFrame = WINDOW_MANAGER:CreateControl(
+        addon.name .. "_DetailSelectedFilterFrame", windowControl, CT_BACKDROP)
+    selectedFilterFrame:SetEdgeTexture("", 1, 1, 1)
+    selectedFilterFrame:SetInsets(-1, -1, -1, -1)
+    selectedFilterFrame:SetCenterColor(0, 0, 0, 0)
+    selectedFilterFrame:SetEdgeColor(0.44, 0.80, 0.62, 0.95)
+    selectedFilterFrame:SetMouseEnabled(false)
+
+    resetFiltersButton = WINDOW_MANAGER:CreateControlFromVirtual(
+        addon.name .. "_DetailResetFilters", windowControl, "ZO_DefaultButton")
+    resetFiltersButton:SetDimensions(70, TITLE_HEIGHT)
+    resetFiltersButton:SetAnchor(TOPLEFT, previousFilterButton, TOPRIGHT, 8, 0)
+    resetFiltersButton:SetText(GetString(SI_BMW_DETAIL_FILTER_RESET))
+    resetFiltersButton:SetHandler("OnClicked", function()
+        priceFilter = "all"
+        suppressSearchEvent = true
+        searchBox:SetText("")
+        suppressSearchEvent = false
+        searchQuery = ""
+        searchHint:SetHidden(false)
+        UpdatePriceFilterButtons()
+        Populate()
+    end)
+    resetFiltersButton:SetHidden(true)
+
     -- Column headers, aligned to the same geometry as the XML row template. They
     -- sit below the toolbar row.
-    local headerY = toolbarY + TITLE_HEIGHT + TOOLBAR_GAP
+    local headerY = filterToolbarY + TITLE_HEIGHT + TOOLBAR_GAP
 
     headerChange = WINDOW_MANAGER:CreateControl(addon.name .. "_DetailHeaderChange", windowControl, CT_LABEL)
     headerChange:SetFont("ZoFontGameSmall")
     headerChange:SetHorizontalAlignment(TEXT_ALIGN_RIGHT)
     headerChange:SetDimensions(90, HEADER_HEIGHT)
-    headerChange:SetAnchor(TOPRIGHT, windowControl, TOPRIGHT, -PADDING - 4, headerY)
+    headerChange:SetAnchor(TOPRIGHT, windowControl, TOPRIGHT,
+        -PADDING - 4 - ROW_ACTION_WIDTH, headerY)
     headerChange:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_DETAIL_COL_CHANGE)))
 
     -- Cumulative-share header. Unlike the others it is NOT a sort toggle (sorting
@@ -761,6 +1024,7 @@ function DetailWindow.Initialize()
     WireHeaderSort(headerQty, "qty", false)
     WireHeaderSort(headerValue, "value", false)
     WireHeaderSort(headerChange, "change", false)
+    UpdateColumnLayout()
     UpdateHeaders()
 
     -- Divider under the headers.
@@ -827,6 +1091,24 @@ function FillList(materials)
     ZO_ScrollList_Commit(listControl)
 
     emptyLabel:SetHidden(#materials > 0)
+end
+
+-- Filter an already-built material list by price coverage. Keep it separate from
+-- Valuation so the getter remains useful to other consumers and the UI can layer
+-- category, text search, and price filters in either order.
+local function ApplyPriceFilter(materials)
+    if priceFilter == "all" then
+        return materials
+    end
+
+    local filtered = {}
+    local wantPriced = priceFilter == "priced"
+    for i = 1, #materials do
+        if materials[i].priced == wantPriced then
+            filtered[#filtered + 1] = materials[i]
+        end
+    end
+    return filtered
 end
 
 -- Re-sort the material rows in place by the active column. The Valuation getters
@@ -1046,11 +1328,12 @@ local function UpdateFooter(materials)
     footerLabel:SetText(table.concat(parts, Colorize(COLOR_MUTED, "  ·  ")))
 end
 
--- Rebuild the scroll list for the current view. Three sources route through here:
--- the diff list (viewMode == "diff"), the whole-bag search results (a query is
--- active), or the current category. Centralized so the search box, a category
--- open, the diff buttons, and the live refresh all share one path. Also sets the
--- empty-state label to match the mode, since FillList only toggles its
+-- Rebuild the scroll list for the current view. Four sources route through here:
+-- the diff list (viewMode == "diff"), whole-bag search results (a query is
+-- active), the current category, or the full Craft Bag coverage view. Centralized
+-- so the search box, a category open, the diff buttons, coverage click, and live
+-- refresh all share one path. Also sets the empty-state label to match the mode,
+-- since FillList only toggles its
 -- visibility, not its text.
 function Populate()
     local materials
@@ -1061,6 +1344,8 @@ function Populate()
             FillList({})
             UpdateFooter({})
             UpdateTitle()
+            UpdateContext()
+            UpdateSnapshotStatus()
             return
         end
         materials = addon.Valuation.GetDiffMaterials()
@@ -1071,11 +1356,14 @@ function Populate()
         elseif currentCategoryId then
             materials = addon.Valuation.GetCategoryMaterials(currentCategoryId)
         else
-            materials = {}
+            materials = addon.Valuation.GetAllMaterials()
         end
         emptyLabel:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_DETAIL_EMPTY)))
     end
 
+    if viewMode ~= "diff" then
+        materials = ApplyPriceFilter(materials)
+    end
     SortMaterials(materials)
     AssignCumulativeShare(materials)
     FillList(materials)
@@ -1084,6 +1372,8 @@ function Populate()
     -- (after UpdateFooter set the count) rather than at each call site. This also
     -- keeps the live Refresh path's counter truthful as stock changes.
     UpdateTitle()
+    UpdateContext()
+    UpdateSnapshotStatus()
 end
 
 -- Keep the title in step with the view: the diff label while comparing, the
@@ -1104,9 +1394,64 @@ function UpdateTitle()
         -- just before this in Populate) so the user sees how many rows matched.
         titleLabel:SetText(Colorize(COLOR_ACCENT,
             stringformat(GetString(SI_BMW_DETAIL_SEARCH_TITLE), currentResultCount)))
+    elseif not currentCategoryId then
+        titleLabel:SetText(Colorize(COLOR_ACCENT,
+            stringformat(GetString(SI_BMW_DETAIL_FILTER_TITLE), currentResultCount)))
     else
         titleLabel:SetText(Colorize(COLOR_ACCENT,
             stringformat(GetString(SI_BMW_DETAIL_TITLE), currentCategoryName or "")))
+    end
+end
+
+-- Render the scope line directly below the title. It deliberately describes the
+-- displayed rows after filters are applied, so the count always matches the list
+-- rather than the broader category or search before narrowing.
+function UpdateContext()
+    if viewMode == "diff" then
+        local info = addon.Valuation.GetSnapshotInfo()
+        local whenText = info and info.t and FormatSnapshotAge(info.t) or GetString(SI_BMW_TIME_NEVER)
+        contextLabel:SetText(Colorize(COLOR_MUTED,
+            stringformat(GetString(SI_BMW_DETAIL_CONTEXT_DIFF), whenText)))
+        return
+    end
+
+    local filterId = SI_BMW_DETAIL_CONTEXT_FILTER_ALL
+    if priceFilter == "priced" then
+        filterId = SI_BMW_DETAIL_FILTER_PRICED
+    elseif priceFilter == "unpriced" then
+        filterId = SI_BMW_DETAIL_FILTER_UNPRICED
+    end
+    local filterText = GetString(filterId)
+
+    if searchQuery ~= "" then
+        contextLabel:SetText(Colorize(COLOR_MUTED,
+            stringformat(GetString(SI_BMW_DETAIL_CONTEXT_SEARCH), searchQuery,
+                currentResultCount, filterText)))
+    elseif currentCategoryId then
+        contextLabel:SetText(Colorize(COLOR_MUTED,
+            stringformat(GetString(SI_BMW_DETAIL_CONTEXT_CATEGORY), currentCategoryName or "",
+                currentResultCount, filterText)))
+    else
+        contextLabel:SetText(Colorize(COLOR_MUTED,
+            stringformat(GetString(SI_BMW_DETAIL_CONTEXT_BAG), currentResultCount, filterText)))
+    end
+end
+
+-- A baseline is normally created automatically on the first non-empty Craft
+-- Bag open. Its age makes that ready-to-use comparison point visible at all
+-- times, including after a manual Remember replacement.
+UpdateSnapshotStatus = function()
+    if not snapshotStatusLabel then
+        return
+    end
+
+    local info = addon.Valuation.GetSnapshotInfo()
+    if info and info.t then
+        snapshotStatusLabel:SetText(Colorize(COLOR_MUTED, stringformat(
+            GetString(SI_BMW_DETAIL_SNAPSHOT_READY), FormatSnapshotAge(info.t))))
+    else
+        snapshotStatusLabel:SetText(Colorize(COLOR_WARN,
+            GetString(SI_BMW_DETAIL_SNAPSHOT_MISSING)))
     end
 end
 
@@ -1153,6 +1498,47 @@ function UpdateHeaders()
     headerCum:SetColor(HEADER_MUTED_R, HEADER_MUTED_G, HEADER_MUTED_B, 1)
 end
 
+-- Re-anchor the Value header around the visible columns and hide analytics-only
+-- controls in the basic mode. Row controls receive the matching layout in
+-- SetupRow during the refresh initiated by ApplyColumnMode.
+UpdateColumnLayout = function()
+    local useAnalytics = UsesAnalyticsColumns()
+
+    headerCum:SetHidden(not useAnalytics)
+    headerChange:SetHidden(not useAnalytics)
+    headerValue:ClearAnchors()
+    if useAnalytics then
+        headerValue:SetAnchor(TOPRIGHT, headerCum, TOPLEFT, -6, 0)
+    else
+        -- Anchor to Change's right edge, which remains at the header row even
+        -- while hidden. Anchoring directly to windowControl had reset Y to zero.
+        headerValue:SetAnchor(TOPRIGHT, headerChange, TOPRIGHT, 0, 0)
+    end
+end
+
+-- The active filter stays clickable, but a green frame makes selection explicit
+-- without ESO's grey disabled treatment. In diff view filters are irrelevant, so
+-- hide the controls instead of leaving inert UI.
+UpdatePriceFilterButtons = function()
+    local hide = viewMode == "diff"
+    for key, button in pairs(filterButtons) do
+        button:SetHidden(hide)
+        button:SetEnabled(not hide)
+    end
+
+    if selectedFilterFrame then
+        selectedFilterFrame:ClearAnchors()
+        selectedFilterFrame:SetAnchorFill(filterButtons[priceFilter])
+        selectedFilterFrame:SetHidden(hide)
+    end
+    if searchClearButton then
+        searchClearButton:SetHidden(hide or searchQuery == "")
+    end
+    if resetFiltersButton then
+        resetFiltersButton:SetHidden(hide or (priceFilter == "all" and searchQuery == ""))
+    end
+end
+
 -- Keep the toggle button's label in step with the mode: "Back" while the diff is
 -- shown, "Changes" otherwise. The action and tooltip read viewMode at event time
 -- (see Initialize), so only the label needs refreshing here.
@@ -1175,6 +1561,7 @@ function DetailWindow.Show(categoryId, categoryName)
     viewMode = "category"
     currentCategoryId = categoryId
     currentCategoryName = categoryName
+    priceFilter = "all"
 
     -- A fresh category open clears any prior search so the user sees the category
     -- they clicked, not stale search results.
@@ -1189,7 +1576,9 @@ function DetailWindow.Show(categoryId, categoryName)
     sortAsc = false
 
     UpdateChangesButton()
+    UpdateColumnLayout()
     UpdateHeaders()
+    UpdatePriceFilterButtons()
     Populate()
     windowControl:SetHidden(false)
     windowControl:BringWindowToTop()
@@ -1214,7 +1603,9 @@ function DetailWindow.ShowMaterials()
     sortAsc = false
 
     UpdateChangesButton()
+    UpdateColumnLayout()
     UpdateHeaders()
+    UpdatePriceFilterButtons()
     Populate()
 end
 
@@ -1235,7 +1626,37 @@ function DetailWindow.ShowDiff()
     suppressSearchEvent = false
 
     UpdateChangesButton()
+    UpdateColumnLayout()
     UpdateHeaders()
+    UpdatePriceFilterButtons()
+    Populate()
+    windowControl:SetHidden(false)
+    windowControl:BringWindowToTop()
+end
+
+-- Open the whole-bag material list pre-filtered to entries with no available
+-- price. Called from the main window's Coverage footer so a warning leads
+-- directly to the materials that need attention.
+function DetailWindow.ShowUnpriced()
+    if not windowControl then
+        return
+    end
+
+    viewMode = "category"
+    currentCategoryId = nil
+    currentCategoryName = nil
+    priceFilter = "unpriced"
+    searchQuery = ""
+    suppressSearchEvent = true
+    searchBox:SetText("")
+    suppressSearchEvent = false
+    sortKey = "value"
+    sortAsc = false
+
+    UpdateChangesButton()
+    UpdateColumnLayout()
+    UpdateHeaders()
+    UpdatePriceFilterButtons()
     Populate()
     windowControl:SetHidden(false)
     windowControl:BringWindowToTop()
@@ -1259,6 +1680,22 @@ function DetailWindow.Refresh()
         return
     end
     Populate()
+end
+
+-- Apply the persisted detail-column mode immediately from the settings panel.
+-- When the price-change column disappears, do not leave the user in an invisible
+-- sort state; return to the practical value-descending default instead.
+function DetailWindow.ApplyColumnMode()
+    if not windowControl then
+        return
+    end
+    if not UsesAnalyticsColumns() and sortKey == "change" then
+        sortKey = "value"
+        sortAsc = false
+    end
+    UpdateColumnLayout()
+    UpdateHeaders()
+    DetailWindow.Refresh()
 end
 
 -- The top-level control, exposed so the withdraw popup/queue can anchor to it

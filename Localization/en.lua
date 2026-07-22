@@ -35,11 +35,15 @@ local strings = {
     SI_BMW_SETTING_CATEGORY_BREAKDOWN_NAME = "Show category breakdown",
     SI_BMW_SETTING_CATEGORY_BREAKDOWN_TOOLTIP = "Show per-profession subtotals (Blacksmithing, Alchemy, Provisioning, and so on) beneath the grand total. When off, only the grand total is shown.",
     SI_BMW_SETTING_CATEGORY_ICONS_NAME = "Show category icons",
-    SI_BMW_SETTING_CATEGORY_ICONS_TOOLTIP = "Show a small profession icon to the left of each category name, so the rows are quicker to scan. \"Other\" has no profession and shows no icon. Has no effect while the category breakdown is off.",
+    SI_BMW_SETTING_CATEGORY_ICONS_TOOLTIP = "Show a small profession icon to the left of each category name, so the rows are quicker to scan. \"Other\" uses a generic Craft Bag icon. Has no effect while the category breakdown is off.",
     SI_BMW_SETTING_COLOR_SCALE_NAME = "Color gold by value",
     SI_BMW_SETTING_COLOR_SCALE_TOOLTIP = "Tint each category's gold figure by how large it is - dim for small amounts up to a hot color for the biggest - so your most valuable categories stand out at a glance. When off, all figures use the same gold tone. Has no effect while the category breakdown is off.",
     SI_BMW_SETTING_SORT_BY_VALUE_NAME = "Sort categories by value",
     SI_BMW_SETTING_SORT_BY_VALUE_TOOLTIP = "Order the category rows by descending gold value, so your most valuable holdings are always on top. When off, they follow the fixed profession order. Has no effect while the category breakdown is off.",
+    SI_BMW_SETTING_DETAIL_COLUMNS_NAME = "Detail table columns",
+    SI_BMW_SETTING_DETAIL_COLUMNS_TOOLTIP = "Basic shows material, quantity, and value for quicker scanning. Analytics also shows cumulative value share and price change. The Changes view always keeps its delta, share, and status columns.",
+    SI_BMW_SETTING_DETAIL_COLUMNS_BASIC = "Basic",
+    SI_BMW_SETTING_DETAIL_COLUMNS_ANALYTICS = "Analytics",
     SI_BMW_SETTING_DELTA_MODE_NAME = "\"Since last visit\" baseline",
     SI_BMW_SETTING_DELTA_MODE_TOOLTIP = "What the footer's value-change line compares against. \"Each visit\": the previous time you opened the Craft Bag (persists across restarts). \"Each session\": the first time you opened it after logging in or reloading the UI, so the change accumulates until you log out or /reloadui. In both modes a pure price change (same materials, refreshed prices) shows no delta.",
     SI_BMW_SETTING_DELTA_MODE_VISIT = "Each visit",
@@ -76,6 +80,7 @@ local strings = {
     -- %s = total item count.
     SI_BMW_WINDOW_SUBTITLE = "%d slots · %s stacks · %s items",
     SI_BMW_WINDOW_EMPTY = "Craft Bag is empty",
+    SI_BMW_WINDOW_VERSION_DATE = "Addon version 3.0.060753 dated July 22, 2026",
     -- Category row: the category's share of the grand total. %d = percent.
     SI_BMW_ROW_PERCENT = "%d%%",
 
@@ -97,7 +102,7 @@ local strings = {
     -- Cumulative-share column: running % of the list's total value, read top-down
     -- (the "what to sell" Pareto cue). Header kept short for the 70px column; the
     -- hover tooltip on the header spells the meaning out in full.
-    SI_BMW_DETAIL_COL_CUM = "Cumul. %",
+    SI_BMW_DETAIL_COL_CUM = "Cum. 80%",
     SI_BMW_DETAIL_CUM = "%d%%",
     SI_BMW_DETAIL_CUM_TOOLTIP_TITLE = "Cumulative share",
     SI_BMW_DETAIL_CUM_TOOLTIP_BODY = "Each material's share of this list's total value, added up from the most valuable downward - so it stays the same no matter how you sort the table. Read it on the default |cFFF897by value|r view: the rows down to roughly 80% are the few stacks that hold most of the worth, so sell those first and skip the long tail. The trailing 100% always lands on the cheapest material. Unpriced materials are left out and show a dash.",
@@ -112,6 +117,21 @@ local strings = {
     -- number of matches; %d = result count.
     SI_BMW_DETAIL_SEARCH_HINT = "Search...",
     SI_BMW_DETAIL_SEARCH_TITLE = "Search results (%d)",
+    SI_BMW_DETAIL_CONTEXT_CATEGORY = "%s · %d materials · %s",
+    SI_BMW_DETAIL_CONTEXT_SEARCH = "Search \"%s\" · %d results · whole Craft Bag · %s",
+    SI_BMW_DETAIL_CONTEXT_BAG = "Whole Craft Bag · %d materials · %s",
+    SI_BMW_DETAIL_CONTEXT_DIFF = "Compared with snapshot %s",
+    SI_BMW_DETAIL_CONTEXT_FILTER_ALL = "all prices",
+    SI_BMW_DETAIL_GROUP_SNAPSHOT = "Snapshot",
+    SI_BMW_DETAIL_SNAPSHOT_READY = "Baseline: %s",
+    SI_BMW_DETAIL_SNAPSHOT_MISSING = "No baseline",
+    SI_BMW_DETAIL_GROUP_FILTER = "Filter",
+    SI_BMW_DETAIL_FILTER_TITLE = "Materials (%d)",
+    SI_BMW_DETAIL_FILTER_ALL = "All",
+    SI_BMW_DETAIL_FILTER_PRICED = "Priced",
+    SI_BMW_DETAIL_FILTER_UNPRICED = "No price",
+    SI_BMW_DETAIL_FILTER_RESET = "Reset",
+    SI_BMW_DETAIL_SEARCH_CLEAR_TOOLTIP = "Clear search",
 
     -- Row hover tooltip in the detail window: the figures already computed for the
     -- columns, spelled out on hover. %s carries a gold-formatted figure
@@ -120,10 +140,16 @@ local strings = {
     SI_BMW_ROW_TOOLTIP_QTY = "Quantity: %s",
     SI_BMW_ROW_TOOLTIP_UNIT = "Unit price: %s",
     SI_BMW_ROW_TOOLTIP_TOTAL = "Stack value: %s",
-    SI_BMW_ROW_TOOLTIP_NET = "Net if sold: %s",
+    SI_BMW_ROW_TOOLTIP_VALUE_SECTION = "Value and fees",
+    SI_BMW_ROW_TOOLTIP_LISTING_FEE = "Listing fee (1%%): -%s",
+    SI_BMW_ROW_TOOLTIP_SALES_TAX = "Sales tax (7%%): -%s",
+    SI_BMW_ROW_TOOLTIP_NET = "Net after fees: %s",
+    SI_BMW_ROW_TOOLTIP_TECHNICAL_SECTION = "Technical data",
     SI_BMW_ROW_TOOLTIP_SOURCE = "Price source: %s",
     SI_BMW_ROW_TOOLTIP_CHANGE = "Price change: %s",
     SI_BMW_ROW_TOOLTIP_UNPRICED = "No price available",
+    SI_BMW_DETAIL_ACTION_WITHDRAW_TOOLTIP = "Withdraw to backpack",
+    SI_BMW_DETAIL_ACTION_QUEUE_TOOLTIP = "Add to withdraw queue",
 
     -- Summary line beneath the detail list. Category/search view: a material count,
     -- the total value (FormatGold), and the list's share of the whole bag's value.
@@ -137,16 +163,15 @@ local strings = {
     SI_BMW_DETAIL_FOOTER_GAINED = "%d up",
     SI_BMW_DETAIL_FOOTER_LOST = "%d down",
 
-    -- Snapshot + diff view (detail window). "Remember" freezes the current bag
-    -- composition; "Changes" diffs the live bag against it. One snapshot, manual,
-    -- overwritten on each Remember - the tooltips spell that out since it is not
-    -- otherwise discoverable.
+    -- Snapshot + diff view (detail window). A one-time automatic baseline is
+    -- captured on the first non-empty bag open; Remember overwrites it with a
+    -- user-selected composition.
     SI_BMW_DETAIL_BTN_REMEMBER = "Remember",
     SI_BMW_DETAIL_BTN_REMEMBER_TOOLTIP_TITLE = "Remember composition",
-    SI_BMW_DETAIL_BTN_REMEMBER_TOOLTIP_BODY = "Manually save a snapshot of the Craft Bag's current contents. Press \"Changes\" later to see what was added, removed, or changed since. There is one snapshot - pressing this again overwrites it.",
+    SI_BMW_DETAIL_BTN_REMEMBER_TOOLTIP_BODY = "Save the Craft Bag's current contents as the snapshot. The addon creates one automatic baseline the first time a non-empty Craft Bag is opened; pressing this replaces it with a snapshot you chose.",
     SI_BMW_DETAIL_BTN_CHANGES = "Changes",
     SI_BMW_DETAIL_BTN_CHANGES_TOOLTIP_TITLE = "Changes since snapshot",
-    SI_BMW_DETAIL_BTN_CHANGES_TOOLTIP_BODY = "Show how the Craft Bag has changed since your saved snapshot: which materials were added, removed, or changed in quantity, and the gold value of each move. Press \"Remember\" first to take a snapshot.",
+    SI_BMW_DETAIL_BTN_CHANGES_TOOLTIP_BODY = "Show how the Craft Bag changed since its saved snapshot: which materials were added, removed, or changed in quantity, and the gold value of each move. A one-time baseline is created automatically when a non-empty Craft Bag is first opened; Remember replaces it at any time.",
     -- Clears the saved snapshot so "Changes" has nothing to diff against until the
     -- next "Remember". Confirmed because the snapshot is the only persisted
     -- baseline and clearing it cannot be undone.
@@ -196,30 +221,43 @@ local strings = {
     SI_BMW_WITHDRAW_PRESET_STACK = "%d stack",
     SI_BMW_WITHDRAW_PRESET_STACKS = "%d stacks",
     SI_BMW_WITHDRAW_CONFIRM = "Withdraw",
+    SI_BMW_WITHDRAW_ADD_TO_QUEUE = "Add to queue",
+    SI_BMW_WITHDRAW_BATCH_TITLE = "Batch withdraw",
+    SI_BMW_WITHDRAW_BATCH_SUMMARY = "%d materials · %s items",
     SI_BMW_WITHDRAW_CANCEL = "Cancel",
+    SI_BMW_WITHDRAW_HIDE = "Hide",
     SI_BMW_WITHDRAW_BACKPACK_FULL = "Backpack is full",
     -- Live progress while a multi-stack withdrawal runs. %d / %d = moved / total.
     SI_BMW_WITHDRAW_PROGRESS = "Withdrawing... %d / %d",
+    SI_BMW_WITHDRAW_RESULT = "Withdrawn: %d / %d",
     -- Hint shown when hovering a detail row: how the two mouse buttons act.
-    SI_BMW_WITHDRAW_HINT = "LMB: withdraw    RMB: add to queue",
+    SI_BMW_WITHDRAW_HINT = "Use the row actions to withdraw or queue this material",
 
-    -- Withdraw queue: the multi-material list, anchored beside the detail window.
+    -- Withdraw queue: the multi-material list embedded in the withdraw window.
     SI_BMW_QUEUE_TITLE = "Withdraw queue",
-    SI_BMW_QUEUE_EMPTY = "Right-click materials to queue them.",
+    SI_BMW_QUEUE_EMPTY = "Use Add to queue or + on a material to build a batch.",
     -- Footer summary. %d = slots the queue needs, %d = free backpack slots.
     SI_BMW_QUEUE_SLOTS = "Needs %d slots / %d free",
     SI_BMW_QUEUE_TOTAL = "Queue value: %s",
+    SI_BMW_QUEUE_SUMMARY = "%d materials · %d slots · %s",
+    SI_BMW_QUEUE_STATUS_READY = "Ready to withdraw",
+    SI_BMW_QUEUE_STATUS_NO_SPACE = "Not enough backpack space",
     SI_BMW_QUEUE_WITHDRAW_ALL = "Withdraw all",
     SI_BMW_QUEUE_CLEAR = "Clear",
 
     -- Window: footer (two-column label -> value rows)
-    SI_BMW_FOOTER_UPDATED_LABEL = "Updated",
-    SI_BMW_FOOTER_COVERAGE_LABEL = "Coverage",
+    SI_BMW_FOOTER_INVENTORY_LABEL = "Bag contents",
+    SI_BMW_FOOTER_PRICES_LABEL = "Market prices",
+    SI_BMW_FOOTER_COVERAGE_LABEL = "Price coverage",
     SI_BMW_FOOTER_COVERAGE_VALUE = "%d/%d priced",
     SI_BMW_FOOTER_LOW_COVERAGE = "%d/%d unpriced!",
+    SI_BMW_FOOTER_COVERAGE_UNPRICED_HINT = "Click to view materials without a price.",
     SI_BMW_FOOTER_DELTA_LABEL = "This visit",
     SI_BMW_FOOTER_DELTA_LABEL_SESSION = "This session",
     SI_BMW_FOOTER_DELTA_VALUE = "%s gold",
+    SI_BMW_FOOTER_GUIDANCE_UNPRICED = "%d materials without a price - view list",
+    SI_BMW_FOOTER_GUIDANCE_TOP_CATEGORIES = "Top 3 categories hold %d%% - open %s",
+    SI_BMW_FOOTER_GUIDANCE_CHANGES = "Since snapshot: %s%s gold - view changes",
 
     -- Grand-total hover: "net if sold" breakdown of the guild-store selling fees.
     -- The %% renders a literal percent through string.format. %s = a gold amount.

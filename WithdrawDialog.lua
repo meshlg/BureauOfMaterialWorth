@@ -73,7 +73,6 @@ local LogDebug = private.LogDebug
 -- Layout
 -- ---------------------------------------------------------------------------
 local POPUP_WIDTH   = 520
-local QUEUE_WIDTH   = 520
 local PADDING       = 16
 local TITLE_HEIGHT  = 30
 local LINE          = 24       -- vertical rhythm for info lines
@@ -82,7 +81,7 @@ local BUTTON_HEIGHT = 30
 local PROGRESS_HEIGHT = 16
 local BG_ALPHA      = 0.94
 local QUEUE_ROW_HEIGHT = 30
-local QUEUE_MAX_ROWS   = 10
+local QUEUE_MAX_ROWS   = 6
 
 -- Caption for a preset button: a plain number under one stack, otherwise an
 -- "N stack(s)" label so 200 reads as "1 stack" and 4000 as "20 stacks".
@@ -114,6 +113,23 @@ local function FindFreeBackpackSlot(reserved)
         while slotIndex and GetSlotStackSize(BAG_BACKPACK, slotIndex) ~= 0 do
             slotIndex = ZO_GetNextBagSlotIndex(BAG_BACKPACK, slotIndex)
         end
+    end
+    return nil
+end
+
+-- The withdrawal engine can use one compatible partial stack before it starts
+-- filling empty slots. Keep this selection aligned with
+-- Valuation.GetBackpackCapacityFor, which exposes the same capacity in the UI.
+local function FindPartialBackpackSlot(itemId, reserved)
+    local slotIndex = ZO_GetNextBagSlotIndex(BAG_BACKPACK)
+    while slotIndex do
+        local stackSize = GetSlotStackSize(BAG_BACKPACK, slotIndex)
+        if not reserved[slotIndex]
+            and GetItemId(BAG_BACKPACK, slotIndex) == itemId
+            and stackSize and stackSize > 0 and stackSize < STACK_SIZE then
+            return slotIndex
+        end
+        slotIndex = ZO_GetNextBagSlotIndex(BAG_BACKPACK, slotIndex)
     end
     return nil
 end
@@ -151,7 +167,7 @@ local engineMoved = 0           -- items confirmed arrived in the backpack
 local engineTotal = 0           -- items the run set out to move
 local engineWatchItemIds = nil  -- [itemId] = true for items this run is moving
 local engineOnProgress = nil    -- callback(moved, total)
-local engineOnFinish = nil      -- callback() when the run ends
+local engineOnFinish = nil      -- callback(moved, total) when the run ends
 
 -- Call the protected RequestMoveItem safely. Guarded so a client where it is NOT
 -- protected still works. Never bind RequestMoveItem to an upvalue -- merely
@@ -173,11 +189,12 @@ local function FinishRun()
     StopWatching()
     isWithdrawing = false
     engineWatchItemIds = nil
+    local moved, total = engineMoved, engineTotal
     local onFinish = engineOnFinish
     engineOnProgress = nil
     engineOnFinish = nil
     if onFinish then
-        onFinish()
+        onFinish(moved, total)
     end
 end
 
@@ -217,8 +234,8 @@ end
 --     queued/clicked; withdrawing the wrong material would be worse than skipping);
 --   * the source stack is empty; or
 --   * there are not enough free backpack slots for the move's full overflow
---     footprint (ceil(qty/200) slots), which would risk a slot collision with a
---     later job -- see the reservation note below.
+--     footprint after using a compatible partial stack, which would risk a slot
+--     collision with a later job -- see the reservation note below.
 -- MUST run in the trusted click callstack (SecureRequestMoveItem is protected).
 local function IssueJob(job, reserved, watchItemIds)
     if GetItemId(BAG, job.slotIndex) ~= job.itemId then
@@ -231,14 +248,18 @@ local function IssueJob(job, reserved, watchItemIds)
         return 0
     end
 
-    -- A move of >200 has its overflow spread by the game across further empty slots
-    -- on its own. Reserve ALL of them up front -- ceil(qty/200) slots -- not just
-    -- the first: otherwise the NEXT job's FindFreeBackpackSlot could hand back a
-    -- slot this job's overflow is about to fill, and the two moves collide (only one
-    -- lands). The first reserved slot is the move's destination; the rest just mark
-    -- the overflow footprint so later jobs skip it.
-    local slotsNeeded = mathfloor((moveQty + STACK_SIZE - 1) / STACK_SIZE)
-    local destSlot = nil
+    -- Prefer a matching partial stack. That makes the actual move agree with the
+    -- popup's max-withdrawable figure, which includes this one stack's remaining
+    -- room. Any overflow still needs distinct empty slots reserved up front.
+    local destSlot = FindPartialBackpackSlot(job.itemId, reserved)
+    local partialRoom = 0
+    if destSlot then
+        partialRoom = STACK_SIZE - (GetSlotStackSize(BAG_BACKPACK, destSlot) or STACK_SIZE)
+        reserved[destSlot] = true
+    end
+
+    local overflowQty = mathmax(0, moveQty - partialRoom)
+    local slotsNeeded = mathfloor((overflowQty + STACK_SIZE - 1) / STACK_SIZE)
     local claimed = {}
     for _ = 1, slotsNeeded do
         local slot = FindFreeBackpackSlot(reserved)
@@ -254,6 +275,9 @@ local function IssueJob(job, reserved, watchItemIds)
     -- collision we are guarding against. Release the partial claim so a smaller
     -- later job can still use those slots, and skip this one (items stay in the bag).
     if not destSlot or #claimed < slotsNeeded then
+        if partialRoom > 0 then
+            reserved[destSlot] = nil
+        end
         for c = 1, #claimed do
             reserved[claimed[c]] = nil
         end
@@ -271,7 +295,7 @@ end
 -- Begin a run. jobs is a list of { itemId, slotIndex, qty }; totalQty is the sum
 -- (for the progress bar). MUST be called synchronously from a click handler so
 -- the protected RequestMoveItem calls run in a trusted callstack.
--- onProgress(moved,total) and onFinish() drive the UI.
+-- onProgress(moved,total) and onFinish(moved,total) drive the UI.
 local function StartRun(jobs, totalQty, onProgress, onFinish)
     if isWithdrawing or totalQty <= 0 then
         return false
@@ -331,19 +355,89 @@ end
 local popup           -- top-level window
 local popupTitle, popupIcon
 local popupFreeLabel, popupMaxLabel, popupValueLabel
-local popupEdit
+local popupQtyLabel, popupEditBg, popupEdit
 local popupPresetButtons = {}
-local popupConfirm, popupCancel
+local popupConfirm, popupAddToQueue, popupCancel
 local popupProgressBar, popupProgressLabel
+local popupBatchSummaryLabel
+local popupBaseHeight
+local popupBatchBaseHeight
+local queueSection
+local queueList
+local queueEmptyLabel
+local queueSummaryLabel, queueStatusLabel
+local queueWithdrawAll, queueClear
+local queueProgressBar
+local QUEUE_ROW_TYPE = 1
 
--- Current material under the popup. The itemId/slot/price/priced fields are read
--- across the popup's lifetime (ComputeMax, RenderPopup, Confirm), so they persist
--- at module scope; the name/icon/quality are only needed to paint the title on
--- open, so they live as locals inside Open rather than lingering here.
+-- Current material under the popup. These fields persist because both the
+-- single-item editor and the batch-mode header can be refreshed while open.
 local curItemId, curSlotIndex, curUnitPrice, curPriced
+local curName, curIcon, curQuality
+local curMaterialData
 local curRequested = 0
 local curMax = 0
 local suppressEditEvent = false  -- guards the editbox sanitizer against its own SetText
+
+-- Queue data is independent from the currently selected popup material: adding a
+-- new material changes the editor at the top but preserves quantities already in
+-- the batch below.
+local queue = {}
+local queueByItemId = {}
+local UpdateQueueSectionVisibility
+local UpdatePopupMode
+
+local function IsBatchMode()
+    return #queue >= 2
+end
+
+local function GetQueueItemCount()
+    local total = 0
+    for i = 1, #queue do
+        total = total + (queue[i].qty or 0)
+    end
+    return total
+end
+
+local function RenderSelectedHeader()
+    if not curName then
+        return
+    end
+
+    popupIcon:SetTexture(curIcon)
+    popupTitle:SetText(Colorize(COLOR_ACCENT, stringformat(GetString(SI_BMW_WITHDRAW_TITLE),
+        addon.Valuation.ColorizeMaterialName(curName, curQuality))))
+end
+
+UpdatePopupMode = function()
+    local batchMode = IsBatchMode()
+
+    popupIcon:SetHidden(batchMode)
+    popupBatchSummaryLabel:SetHidden(not batchMode)
+    popupFreeLabel:SetHidden(batchMode)
+    popupMaxLabel:SetHidden(batchMode)
+    popupValueLabel:SetHidden(batchMode)
+    popupQtyLabel:SetHidden(batchMode)
+    popupEditBg:SetHidden(batchMode)
+    popupConfirm:SetHidden(batchMode)
+    popupAddToQueue:SetHidden(batchMode)
+    popupCancel:SetHidden(batchMode)
+
+    for i = 1, #popupPresetButtons do
+        popupPresetButtons[i]:SetHidden(batchMode)
+    end
+
+    if batchMode then
+        popupTitle:SetText(Colorize(COLOR_ACCENT, GetString(SI_BMW_WITHDRAW_BATCH_TITLE)))
+        popupBatchSummaryLabel:SetText(Colorize(COLOR_MUTED,
+            stringformat(GetString(SI_BMW_WITHDRAW_BATCH_SUMMARY), #queue,
+                ZO_LocalizeDecimalNumber(GetQueueItemCount()))))
+        popupProgressBar:SetHidden(true)
+        popupProgressLabel:SetHidden(true)
+    else
+        RenderSelectedHeader()
+    end
+end
 
 local function ComputeMax()
     local srcStack = GetSlotStackSize(BAG, curSlotIndex) or 0
@@ -376,6 +470,7 @@ local function RenderPopup()
     -- Confirm is only usable when there is something to move.
     local canWithdraw = not isWithdrawing and curRequested > 0 and curRequested <= curMax
     popupConfirm:SetEnabled(canWithdraw)
+    popupAddToQueue:SetEnabled(not isWithdrawing and curMaterialData ~= nil)
 end
 
 local function SetRequested(qty)
@@ -392,16 +487,36 @@ local function SetRequested(qty)
     RenderPopup()
 end
 
-local function OnPopupFinish()
-    -- The run ended (completed, backpack full, or cancelled). Recompute the cap
-    -- against the now-smaller craft-bag stack and re-enable the controls.
+-- Point the compact editor at a material record. Queue entries deliberately use
+-- the same fields as detail rows, so this keeps the title, price, available
+-- capacity, and requested quantity in one consistent selection state.
+local function SelectMaterial(materialData, requestedQty)
+    curItemId = materialData.itemId
+    curSlotIndex = materialData.slotIndex
+    curUnitPrice = materialData.unitPrice
+    curPriced = materialData.priced
+    curMaterialData = materialData
+    curName = materialData.name
+    curIcon = materialData.icon
+    curQuality = materialData.quality
+
+    ComputeMax()
+    SetRequested(requestedQty or DefaultQuantityForQuality(curQuality))
+end
+
+local function OnPopupFinish(moved, total)
+    -- Protected moves cannot be revoked after the click. Keep the final observed
+    -- result visible instead of implying that a Hide action cancelled the run.
     popupProgressBar:SetHidden(true)
-    popupProgressLabel:SetHidden(true)
+    popupProgressLabel:SetText(Colorize(COLOR_MUTED,
+        stringformat(GetString(SI_BMW_WITHDRAW_RESULT), moved or 0, total or 0)))
+    popupProgressLabel:SetHidden(false)
     for i = 1, #popupPresetButtons do
         popupPresetButtons[i]:SetEnabled(true)
     end
     popupEdit:SetEditEnabled(true)
     popupCancel:SetEnabled(true)
+    popupCancel:SetText(GetString(SI_BMW_WITHDRAW_CANCEL))
 
     ComputeMax()
     SetRequested(mathmin(curRequested, curMax))
@@ -430,9 +545,11 @@ function WithdrawDialog.Confirm()
     end
     popupEdit:SetEditEnabled(false)
     popupConfirm:SetEnabled(false)
+    popupAddToQueue:SetEnabled(false)
     popupProgressBar:SetHidden(false)
     popupProgressBar:SetValue(0)
     popupProgressLabel:SetHidden(false)
+    popupCancel:SetText(GetString(SI_BMW_WITHDRAW_HIDE))
 
     StartRun({ { itemId = curItemId, slotIndex = curSlotIndex, qty = qty } }, qty,
         OnPopupProgress, OnPopupFinish)
@@ -445,9 +562,9 @@ local function HidePopup()
 end
 
 function WithdrawDialog.CancelPopup()
-    if isWithdrawing then
-        FinishRun()
-    end
+    -- The requests were issued synchronously from the click handler and cannot
+    -- be cancelled. Hiding leaves the watcher active so the final result remains
+    -- accurate and the engine cleans itself up on completion.
     HidePopup()
 end
 
@@ -461,6 +578,22 @@ local function InitializePopup()
     popup:SetMovable(true)
     popup:SetDrawLayer(DL_OVERLAY)
     popup:SetDrawTier(DT_HIGH)
+    -- The unified withdraw window is independent from the material list. Center
+    -- it on first use, then preserve its dragged position across opens/reloads.
+    local savedVars = private.savedVars or {}
+    if savedVars.withdrawWindowLeft and savedVars.withdrawWindowTop then
+        popup:SetAnchor(TOPLEFT, GuiRoot, TOPLEFT,
+            savedVars.withdrawWindowLeft, savedVars.withdrawWindowTop)
+    else
+        popup:SetAnchor(CENTER, GuiRoot, CENTER, 0, 0)
+    end
+    popup:SetHandler("OnMoveStop", function(self)
+        local vars = private.savedVars
+        if vars then
+            vars.withdrawWindowLeft = mathfloor(self:GetLeft())
+            vars.withdrawWindowTop = mathfloor(self:GetTop())
+        end
+    end)
 
     local backdrop = WINDOW_MANAGER:CreateControl(addon.name .. "_WithdrawBackdrop", popup, CT_BACKDROP)
     backdrop:SetAnchorFill(popup)
@@ -489,6 +622,15 @@ local function InitializePopup()
     closeButton:SetHandler("OnClicked", function() WithdrawDialog.CancelPopup() end)
 
     local innerWidth = POPUP_WIDTH - PADDING * 2
+
+    popupBatchSummaryLabel = WINDOW_MANAGER:CreateControl(
+        addon.name .. "_WithdrawBatchSummary", popup, CT_LABEL)
+    popupBatchSummaryLabel:SetFont("ZoFontGame")
+    popupBatchSummaryLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+    popupBatchSummaryLabel:SetDimensions(innerWidth, LINE)
+    popupBatchSummaryLabel:SetAnchor(TOPLEFT, popup, TOPLEFT, PADDING, PADDING + TITLE_HEIGHT)
+    popupBatchSummaryLabel:SetHidden(true)
+
     local y = PADDING + TITLE_HEIGHT + SECTION_GAP
 
     popupFreeLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_WithdrawFree", popup, CT_LABEL)
@@ -532,34 +674,34 @@ local function InitializePopup()
     y = y + presetRows * (BUTTON_HEIGHT + btnGap) + SECTION_GAP
 
     -- Quantity row: label on the left, editbox to its right.
-    local qtyLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_WithdrawQtyLabel", popup, CT_LABEL)
-    qtyLabel:SetFont("ZoFontGame")
-    qtyLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
-    qtyLabel:SetDimensions(120, BUTTON_HEIGHT)
-    qtyLabel:SetAnchor(TOPLEFT, popup, TOPLEFT, PADDING, y)
-    qtyLabel:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_WITHDRAW_QTY_LABEL)))
+    popupQtyLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_WithdrawQtyLabel", popup, CT_LABEL)
+    popupQtyLabel:SetFont("ZoFontGame")
+    popupQtyLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+    popupQtyLabel:SetDimensions(120, BUTTON_HEIGHT)
+    popupQtyLabel:SetAnchor(TOPLEFT, popup, TOPLEFT, PADDING, y)
+    popupQtyLabel:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_WITHDRAW_QTY_LABEL)))
 
-    local editBg = WINDOW_MANAGER:CreateControlFromVirtual(
+    popupEditBg = WINDOW_MANAGER:CreateControlFromVirtual(
         addon.name .. "_WithdrawEditBg", popup, "ZO_DefaultBackdrop")
-    editBg:SetDimensions(140, BUTTON_HEIGHT)
+    popupEditBg:SetDimensions(140, BUTTON_HEIGHT)
     -- ZO_DefaultBackdrop ships with its own anchors; clear them before ours so
     -- this does not become a rejected third anchor.
-    editBg:ClearAnchors()
-    editBg:SetAnchor(LEFT, qtyLabel, RIGHT, 8, 0)
+    popupEditBg:ClearAnchors()
+    popupEditBg:SetAnchor(LEFT, popupQtyLabel, RIGHT, 8, 0)
     -- Clicking anywhere on the backdrop (incl. its padding) focuses the editbox,
     -- so the whole field is the hit target, not just the glyphs. Without this the
     -- box reads as "locked" because a custom (non-dialog) editbox does not grab
     -- focus on click on its own. Mirrors the detail window's search field.
-    editBg:SetMouseEnabled(true)
-    editBg:SetHandler("OnMouseUp", function()
+    popupEditBg:SetMouseEnabled(true)
+    popupEditBg:SetHandler("OnMouseUp", function()
         if popupEdit then
             popupEdit:TakeFocus()
         end
     end)
 
-    popupEdit = WINDOW_MANAGER:CreateControl(addon.name .. "_WithdrawEdit", editBg, CT_EDITBOX)
-    popupEdit:SetAnchor(TOPLEFT, editBg, TOPLEFT, 8, 2)
-    popupEdit:SetAnchor(BOTTOMRIGHT, editBg, BOTTOMRIGHT, -8, -2)
+    popupEdit = WINDOW_MANAGER:CreateControl(addon.name .. "_WithdrawEdit", popupEditBg, CT_EDITBOX)
+    popupEdit:SetAnchor(TOPLEFT, popupEditBg, TOPLEFT, 8, 2)
+    popupEdit:SetAnchor(BOTTOMRIGHT, popupEditBg, BOTTOMRIGHT, -8, -2)
     popupEdit:SetFont("ZoFontGame")
     popupEdit:SetMaxInputChars(7)
     popupEdit:SetMouseEnabled(true)
@@ -602,22 +744,38 @@ local function InitializePopup()
     popupProgressLabel:SetHidden(true)
     y = y + PROGRESS_HEIGHT + SECTION_GAP
 
-    -- Confirm + Cancel at the bottom corners.
+    -- The selected material can be withdrawn immediately or added to the batch.
+    -- The batch itself is shown as an expandable lower section of this same window.
     popupConfirm = WINDOW_MANAGER:CreateControlFromVirtual(
         addon.name .. "_WithdrawConfirm", popup, "ZO_DefaultButton")
-    popupConfirm:SetDimensions(140, BUTTON_HEIGHT)
+    local actionGap = 8
+    local actionWidth = mathfloor((innerWidth - actionGap * 2) / 3)
+    popupConfirm:SetDimensions(actionWidth, BUTTON_HEIGHT)
     popupConfirm:SetAnchor(TOPLEFT, popup, TOPLEFT, PADDING, y)
     popupConfirm:SetText(GetString(SI_BMW_WITHDRAW_CONFIRM))
     popupConfirm:SetHandler("OnClicked", function() WithdrawDialog.Confirm() end)
 
+    popupAddToQueue = WINDOW_MANAGER:CreateControlFromVirtual(
+        addon.name .. "_WithdrawAddToQueue", popup, "ZO_DefaultButton")
+    popupAddToQueue:SetDimensions(actionWidth, BUTTON_HEIGHT)
+    popupAddToQueue:SetAnchor(TOPLEFT, popupConfirm, TOPRIGHT, actionGap, 0)
+    popupAddToQueue:SetText(GetString(SI_BMW_WITHDRAW_ADD_TO_QUEUE))
+    popupAddToQueue:SetHandler("OnClicked", function()
+        if curMaterialData then
+            WithdrawDialog.AddToQueue(curMaterialData)
+        end
+    end)
+
     popupCancel = WINDOW_MANAGER:CreateControlFromVirtual(
         addon.name .. "_WithdrawCancelBtn", popup, "ZO_DefaultButton")
-    popupCancel:SetDimensions(140, BUTTON_HEIGHT)
+    popupCancel:SetDimensions(actionWidth, BUTTON_HEIGHT)
     popupCancel:SetAnchor(TOPRIGHT, popup, TOPRIGHT, -PADDING, y)
     popupCancel:SetText(GetString(SI_BMW_WITHDRAW_CANCEL))
     popupCancel:SetHandler("OnClicked", function() WithdrawDialog.CancelPopup() end)
 
-    popup:SetHeight(y + BUTTON_HEIGHT + PADDING)
+    popupBaseHeight = y + BUTTON_HEIGHT + PADDING
+    popupBatchBaseHeight = PADDING + TITLE_HEIGHT + LINE + SECTION_GAP
+    popup:SetHeight(popupBaseHeight)
 end
 
 -- Open the popup for a material row (the record from GetCategoryMaterials, now
@@ -630,86 +788,62 @@ function WithdrawDialog.Open(materialData)
         return  -- don't swap material mid-run
     end
 
-    curItemId = materialData.itemId
-    curSlotIndex = materialData.slotIndex
-    curUnitPrice = materialData.unitPrice
-    curPriced = materialData.priced
-    -- Name/icon/quality are only used to paint the title and seed the default
-    -- quantity here, so they stay local to this call rather than at module scope.
-    local curName = materialData.name
-    local curIcon = materialData.icon
-    local curQuality = materialData.quality
-
-    popupIcon:SetTexture(curIcon)
-    popupTitle:SetText(Colorize(COLOR_ACCENT, stringformat(GetString(SI_BMW_WITHDRAW_TITLE),
-        addon.Valuation.ColorizeMaterialName(curName, curQuality))))
-
     popupProgressBar:SetHidden(true)
     popupProgressLabel:SetHidden(true)
+    popupCancel:SetText(GetString(SI_BMW_WITHDRAW_CANCEL))
 
-    ComputeMax()
-    SetRequested(mathmin(DefaultQuantityForQuality(curQuality), curMax))
+    SelectMaterial(materialData, DefaultQuantityForQuality(materialData.quality))
 
-    -- Sit the popup just ABOVE the detail window (left edges aligned) so it reads
-    -- as belonging to it and never covers the material list. Falls back to
-    -- screen-center when the detail window is somehow unavailable.
-    popup:ClearAnchors()
-    local detailControl = addon.DetailWindow and addon.DetailWindow.GetWindowControl()
-    if detailControl then
-        popup:SetAnchor(BOTTOMLEFT, detailControl, TOPLEFT, 0, -8)
-    else
-        popup:SetAnchor(CENTER, GuiRoot, CENTER, 0, 0)
-    end
+    UpdateQueueSectionVisibility()
 
     popup:SetHidden(false)
     popup:BringWindowToTop()
 end
 
 -- ===========================================================================
--- Part B: multi-material withdraw queue
+-- Part B: multi-material withdraw queue, embedded below the single-material
+-- editor in the same popup.
 -- ===========================================================================
-local queueWindow
-local queueList
-local queueEmptyLabel
-local queueSlotsLabel, queueTotalLabel
-local queueWithdrawAll, queueClear
-local queueProgressBar
-local QUEUE_ROW_TYPE = 1
-
--- Queue entries: ordered list plus an itemId index so a repeat right-click
--- updates the existing entry instead of duplicating it.
-local queue = {}            -- array of { itemId, slotIndex, name, icon, quality, unitPrice, priced, qty }
-local queueByItemId = {}    -- [itemId] = entry
-
--- Total backpack slots a quantity needs, derived the same way withdrawals fill:
--- ceil(qty / 200). This is an upper bound (it ignores partial-stack top-ups), so
--- the "needs N / free M" readout is conservative -- it never claims something
--- fits when it might not.
-local function SlotsForQuantity(qty)
+-- Total empty backpack slots a quantity needs after the destination partial stack
+-- is topped up. This mirrors the withdrawal engine, so the "needs N / free M"
+-- readout and the enabled state of the action button match what can be moved.
+local function SlotsForQuantity(qty, partialRoom)
     if not qty or qty <= 0 then
         return 0
     end
-    return mathfloor((qty + STACK_SIZE - 1) / STACK_SIZE)
+    return mathfloor((mathmax(0, qty - (partialRoom or 0)) + STACK_SIZE - 1) / STACK_SIZE)
 end
 
-local function RenderQueueFooter()
+local function GetPartialBackpackRoom(itemId)
+    local slotIndex = FindPartialBackpackSlot(itemId, {})
+    if not slotIndex then
+        return 0
+    end
+    return STACK_SIZE - (GetSlotStackSize(BAG_BACKPACK, slotIndex) or STACK_SIZE)
+end
+
+-- The header and action state share one capacity calculation, matching the
+-- protected movement engine's slot reservation rules. A queue should answer
+-- both "what will move?" and "can it move?" without making the player compare
+-- separate footer figures.
+local function RenderQueueSummary()
     local neededSlots, totalValue = 0, 0
     for i = 1, #queue do
         local e = queue[i]
-        neededSlots = neededSlots + SlotsForQuantity(e.qty)
+        neededSlots = neededSlots + SlotsForQuantity(e.qty, GetPartialBackpackRoom(e.itemId))
         if e.priced and e.unitPrice then
             totalValue = totalValue + e.unitPrice * e.qty
         end
     end
 
     local free = GetNumBagFreeSlots(BAG_BACKPACK)
-    local color = neededSlots > free and COLOR_WARN or COLOR_MUTED
-    queueSlotsLabel:SetText(Colorize(color,
-        stringformat(GetString(SI_BMW_QUEUE_SLOTS), neededSlots, free)))
-    queueTotalLabel:SetText(Colorize(COLOR_MUTED,
-        stringformat(GetString(SI_BMW_QUEUE_TOTAL), FormatGold(totalValue))))
+    local canWithdraw = #queue > 0 and neededSlots <= free
+    queueSummaryLabel:SetText(Colorize(COLOR_MUTED, stringformat(
+        GetString(SI_BMW_QUEUE_SUMMARY), #queue, neededSlots, FormatGold(totalValue))))
+    queueStatusLabel:SetText(Colorize(canWithdraw and COLOR_ACCENT or COLOR_WARN,
+        GetString(canWithdraw and SI_BMW_QUEUE_STATUS_READY or SI_BMW_QUEUE_STATUS_NO_SPACE)))
 
-    queueWithdrawAll:SetEnabled(not isWithdrawing and #queue > 0)
+    queueWithdrawAll:SetEnabled(not isWithdrawing and canWithdraw)
     queueClear:SetEnabled(not isWithdrawing and #queue > 0)
 end
 
@@ -725,30 +859,27 @@ end
 
 local function RefreshQueue()
     PopulateQueueList()
-    RenderQueueFooter()
+    RenderQueueSummary()
 end
 
-local function ShowQueueWindow()
-    if not queueWindow then
+UpdateQueueSectionVisibility = function()
+    if not queueSection then
         return
     end
-    -- Drop the queue just BELOW the detail window (left edges aligned) so we do
-    -- not scatter floating windows; ESO drags the anchored window along with its
-    -- relativeTo. The popup sits above the detail window, the queue below it.
-    queueWindow:ClearAnchors()
-    local detailControl = addon.DetailWindow and addon.DetailWindow.GetWindowControl()
-    if detailControl then
-        queueWindow:SetAnchor(TOPLEFT, detailControl, BOTTOMLEFT, 0, 8)
-    else
-        queueWindow:SetAnchor(CENTER, GuiRoot, CENTER, 0, 0)
-    end
-    queueWindow:SetHidden(false)
-end
 
-local function HideQueueWindow()
-    if queueWindow then
-        queueWindow:SetHidden(true)
+    -- A lone queued material is the same operation as the compact editor above.
+    -- Show the batch list only when there are two distinct materials to review.
+    local show = IsBatchMode()
+    local queueTop = popupBaseHeight + SECTION_GAP
+    if show then
+        queueTop = popupBatchBaseHeight
     end
+
+    UpdatePopupMode()
+    queueSection:SetHidden(not show)
+    queueSection:ClearAnchors()
+    queueSection:SetAnchor(TOPLEFT, popup, TOPLEFT, PADDING, queueTop)
+    popup:SetHeight(show and queueTop + queueSection:GetHeight() + PADDING or popupBaseHeight)
 end
 
 function WithdrawDialog.AddToQueue(materialData)
@@ -778,7 +909,19 @@ function WithdrawDialog.AddToQueue(materialData)
         queueByItemId[materialData.itemId] = entry
     end
 
-    ShowQueueWindow()
+    -- With one entry there is no separate batch UI: the normal editor is the
+    -- only view and must show the queue's actual requested quantity.
+    if #queue == 1 then
+        SelectMaterial(entry, entry.qty)
+    end
+
+    -- Keep the unified popup visible. Its queue section expands only after a
+    -- second material is present, avoiding a duplicate one-item representation.
+    if popup:IsHidden() then
+        WithdrawDialog.Open(materialData)
+    else
+        UpdateQueueSectionVisibility()
+    end
     RefreshQueue()
 end
 
@@ -786,6 +929,7 @@ function WithdrawDialog.RemoveFromQueue(itemId)
     if not queueByItemId[itemId] then
         return
     end
+    local wasBatchMode = IsBatchMode()
     queueByItemId[itemId] = nil
     for i = 1, #queue do
         if queue[i].itemId == itemId then
@@ -793,10 +937,16 @@ function WithdrawDialog.RemoveFromQueue(itemId)
             break
         end
     end
-    RefreshQueue()
-    if #queue == 0 then
-        HideQueueWindow()
+
+    -- When removing a row collapses a 2+ item batch back to one queue entry,
+    -- that entry becomes the only meaningful single-material context. Replace
+    -- any older material that originally opened the popup before showing the
+    -- compact editor again.
+    if wasBatchMode and #queue == 1 then
+        SelectMaterial(queue[1], queue[1].qty)
     end
+    RefreshQueue()
+    UpdateQueueSectionVisibility()
 end
 
 function WithdrawDialog.ClearQueue()
@@ -806,30 +956,42 @@ function WithdrawDialog.ClearQueue()
     queue = {}
     queueByItemId = {}
     RefreshQueue()
-    HideQueueWindow()
+    UpdateQueueSectionVisibility()
 end
 
 local function OnQueueProgress(moved, total)
     queueProgressBar:SetValue(total > 0 and moved / total or 0)
 end
 
-local function OnQueueFinish()
-    queueProgressBar:SetHidden(true)
-    -- Drop fully-withdrawn entries (source slot now empty); keep partials.
+local function NormalizeQueue()
     for i = #queue, 1, -1 do
-        local e = queue[i]
-        local remainingStack = GetSlotStackSize(BAG, e.slotIndex) or 0
-        if remainingStack <= 0 then
-            queueByItemId[e.itemId] = nil
+        local entry = queue[i]
+        local currentItemId = GetItemId(BAG, entry.slotIndex)
+        local remainingStack = GetSlotStackSize(BAG, entry.slotIndex) or 0
+        if currentItemId ~= entry.itemId or remainingStack <= 0 then
+            queueByItemId[entry.itemId] = nil
             table.remove(queue, i)
         else
-            e.qty = mathmin(e.qty, remainingStack)
+            entry.qty = mathmin(entry.qty, remainingStack)
+            local valuation = addon.Valuation
+            if valuation and valuation.GetMaterialPrice then
+                local unitPrice, priced = valuation.GetMaterialPrice(entry.itemId, entry.slotIndex)
+                entry.unitPrice = unitPrice
+                entry.priced = priced
+            end
         end
     end
+end
+
+local function OnQueueFinish()
+    queueProgressBar:SetHidden(true)
+    -- Drop exhausted entries and ones whose virtual slot was reused by a
+    -- different material; keep valid partials with their quantity clamped.
+    NormalizeQueue()
     RefreshQueue()
-    if #queue == 0 then
-        HideQueueWindow()
-    end
+    UpdateQueueSectionVisibility()
+    ComputeMax()
+    RenderPopup()
 end
 
 function WithdrawDialog.WithdrawAll()
@@ -837,17 +999,19 @@ function WithdrawDialog.WithdrawAll()
         return
     end
 
-    local jobs, total = {}, 0
+    local jobs, total, neededSlots = {}, 0, 0
     for i = 1, #queue do
         local e = queue[i]
         local srcStack = GetSlotStackSize(BAG, e.slotIndex) or 0
-        local qty = mathmin(e.qty, srcStack)
-        if qty > 0 then
+        if GetItemId(BAG, e.slotIndex) == e.itemId and srcStack > 0 then
+            local qty = mathmin(e.qty, srcStack)
             jobs[#jobs + 1] = { itemId = e.itemId, slotIndex = e.slotIndex, qty = qty }
             total = total + qty
+            neededSlots = neededSlots + SlotsForQuantity(qty, GetPartialBackpackRoom(e.itemId))
         end
     end
-    if total <= 0 then
+    if total <= 0 or neededSlots > GetNumBagFreeSlots(BAG_BACKPACK) then
+        RefreshQueue()
         return
     end
 
@@ -855,6 +1019,12 @@ function WithdrawDialog.WithdrawAll()
     queueProgressBar:SetValue(0)
     queueWithdrawAll:SetEnabled(false)
     queueClear:SetEnabled(false)
+    popupConfirm:SetEnabled(false)
+    popupAddToQueue:SetEnabled(false)
+    popupEdit:SetEditEnabled(false)
+    for i = 1, #popupPresetButtons do
+        popupPresetButtons[i]:SetEnabled(false)
+    end
     StartRun(jobs, total, OnQueueProgress, OnQueueFinish)
 end
 
@@ -911,12 +1081,12 @@ local function SetupQueueRow(rowControl, data)
                 rowControl.bmwSuppressEdit = false
             end
 
-            -- Update just this row's value + the footer; avoid a full rebuild so
+            -- Update just this row's value + the summary; avoid a full rebuild so
             -- the editbox keeps focus while typing.
             if d.priced and d.unitPrice then
                 valueLabel:SetText(FormatGold(d.unitPrice * qty))
             end
-            RenderQueueFooter()
+            RenderQueueSummary()
         end)
 
         local removeButton = rowControl:GetNamedChild("Remove")
@@ -929,47 +1099,49 @@ local function SetupQueueRow(rowControl, data)
     end
 end
 
-local function InitializeQueueWindow()
-    local innerWidth = QUEUE_WIDTH - PADDING * 2
+local function InitializeQueueSection()
+    local innerWidth = POPUP_WIDTH - PADDING * 2
 
-    queueWindow = WINDOW_MANAGER:CreateTopLevelWindow(addon.name .. "_QueueWindow")
-    queueWindow:SetClampedToScreen(true)
-    queueWindow:SetDimensions(QUEUE_WIDTH, 360)
-    queueWindow:SetHidden(true)
-    queueWindow:SetMouseEnabled(true)
-    queueWindow:SetMovable(true)
+    queueSection = WINDOW_MANAGER:CreateControl(addon.name .. "_QueueSection", popup, CT_CONTROL)
+    queueSection:SetWidth(innerWidth)
+    queueSection:SetAnchor(TOPLEFT, popup, TOPLEFT, PADDING, popupBaseHeight + SECTION_GAP)
+    queueSection:SetHidden(true)
 
-    local backdrop = WINDOW_MANAGER:CreateControl(addon.name .. "_QueueBackdrop", queueWindow, CT_BACKDROP)
-    backdrop:SetAnchorFill(queueWindow)
-    backdrop:SetEdgeTexture("", 1, 1, 1)
-    backdrop:SetInsets(2, 2, -2, -2)
-    backdrop:SetCenterColor(0.05, 0.05, 0.06, BG_ALPHA)
-    backdrop:SetEdgeColor(0.42, 0.40, 0.34, 0.9)
-
-    local title = WINDOW_MANAGER:CreateControl(addon.name .. "_QueueTitle", queueWindow, CT_LABEL)
-    title:SetFont("ZoFontWinH4")
-    title:SetVerticalAlignment(TEXT_ALIGN_CENTER)
-    title:SetDimensions(innerWidth, TITLE_HEIGHT)
-    title:SetAnchor(TOPLEFT, queueWindow, TOPLEFT, PADDING, PADDING)
-    title:SetText(Colorize(COLOR_ACCENT, GetString(SI_BMW_QUEUE_TITLE)))
-
-    -- Divider under the title, mirroring the detail window's header rule.
-    local divider = WINDOW_MANAGER:CreateControl(addon.name .. "_QueueDivider", queueWindow, CT_TEXTURE)
+    local divider = WINDOW_MANAGER:CreateControl(addon.name .. "_QueueDivider", queueSection, CT_TEXTURE)
     divider:SetTexture("EsoUI/Art/Miscellaneous/horizontalDivider.dds")
     divider:SetDimensions(innerWidth, 4)
     divider:SetColor(1, 1, 1, 0.4)
-    divider:SetAnchor(TOPLEFT, queueWindow, TOPLEFT, PADDING, PADDING + TITLE_HEIGHT)
+    divider:SetAnchor(TOPLEFT, queueSection, TOPLEFT, 0, 0)
 
-    local listY = PADDING + TITLE_HEIGHT + SECTION_GAP
+    local title = WINDOW_MANAGER:CreateControl(addon.name .. "_QueueTitle", queueSection, CT_LABEL)
+    title:SetFont("ZoFontWinH4")
+    title:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+    title:SetDimensions(innerWidth, TITLE_HEIGHT)
+    title:SetAnchor(TOPLEFT, queueSection, TOPLEFT, 0, SECTION_GAP)
+    title:SetText(Colorize(COLOR_ACCENT, GetString(SI_BMW_QUEUE_TITLE)))
+
+    queueSummaryLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_QueueSummary", queueSection, CT_LABEL)
+    queueSummaryLabel:SetFont("ZoFontGame")
+    queueSummaryLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+    queueSummaryLabel:SetDimensions(innerWidth, LINE)
+    queueSummaryLabel:SetAnchor(TOPLEFT, title, BOTTOMLEFT, 0, 0)
+
+    queueStatusLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_QueueStatus", queueSection, CT_LABEL)
+    queueStatusLabel:SetFont("ZoFontGameSmall")
+    queueStatusLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+    queueStatusLabel:SetDimensions(innerWidth, LINE)
+    queueStatusLabel:SetAnchor(TOPLEFT, queueSummaryLabel, BOTTOMLEFT, 0, 0)
+
+    local listY = SECTION_GAP + TITLE_HEIGHT + LINE * 2 + SECTION_GAP
     queueList = WINDOW_MANAGER:CreateControlFromVirtual(
-        addon.name .. "_QueueListControl", queueWindow, "BureauOfMaterialWorth_WithdrawQueueList")
+        addon.name .. "_QueueListControl", queueSection, "BureauOfMaterialWorth_WithdrawQueueList")
     queueList:SetDimensions(innerWidth, QUEUE_ROW_HEIGHT * QUEUE_MAX_ROWS)
-    queueList:SetAnchor(TOPLEFT, queueWindow, TOPLEFT, PADDING, listY)
+    queueList:SetAnchor(TOPLEFT, queueSection, TOPLEFT, 0, listY)
     ZO_ScrollList_Initialize(queueList)
     ZO_ScrollList_AddDataType(queueList, QUEUE_ROW_TYPE,
         "BureauOfMaterialWorth_WithdrawQueueRow", QUEUE_ROW_HEIGHT, SetupQueueRow)
 
-    queueEmptyLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_QueueEmpty", queueWindow, CT_LABEL)
+    queueEmptyLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_QueueEmpty", queueSection, CT_LABEL)
     queueEmptyLabel:SetFont("ZoFontGame")
     queueEmptyLabel:SetHorizontalAlignment(TEXT_ALIGN_CENTER)
     queueEmptyLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
@@ -979,31 +1151,16 @@ local function InitializeQueueWindow()
 
     local footerY = listY + QUEUE_ROW_HEIGHT * QUEUE_MAX_ROWS + SECTION_GAP
 
-    -- Footer divider above the summary, balancing the header rule.
-    local footerDivider = WINDOW_MANAGER:CreateControl(addon.name .. "_QueueFooterDivider", queueWindow, CT_TEXTURE)
+    local footerDivider = WINDOW_MANAGER:CreateControl(addon.name .. "_QueueFooterDivider", queueSection, CT_TEXTURE)
     footerDivider:SetTexture("EsoUI/Art/Miscellaneous/horizontalDivider.dds")
     footerDivider:SetDimensions(innerWidth, 4)
     footerDivider:SetColor(1, 1, 1, 0.4)
-    footerDivider:SetAnchor(TOPLEFT, queueWindow, TOPLEFT, PADDING, footerY)
+    footerDivider:SetAnchor(TOPLEFT, queueSection, TOPLEFT, 0, footerY)
     footerY = footerY + SECTION_GAP
 
-    queueSlotsLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_QueueSlots", queueWindow, CT_LABEL)
-    queueSlotsLabel:SetFont("ZoFontGame")
-    queueSlotsLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
-    queueSlotsLabel:SetDimensions(innerWidth * 0.5, LINE)
-    queueSlotsLabel:SetAnchor(TOPLEFT, queueWindow, TOPLEFT, PADDING, footerY)
-
-    queueTotalLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_QueueTotalValue", queueWindow, CT_LABEL)
-    queueTotalLabel:SetFont("ZoFontGame")
-    queueTotalLabel:SetHorizontalAlignment(TEXT_ALIGN_RIGHT)
-    queueTotalLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
-    queueTotalLabel:SetDimensions(innerWidth * 0.5, LINE)
-    queueTotalLabel:SetAnchor(TOPRIGHT, queueWindow, TOPRIGHT, -PADDING, footerY)
-    footerY = footerY + LINE + SECTION_GAP
-
-    queueProgressBar = WINDOW_MANAGER:CreateControl(addon.name .. "_QueueProgress", queueWindow, CT_STATUSBAR)
+    queueProgressBar = WINDOW_MANAGER:CreateControl(addon.name .. "_QueueProgress", queueSection, CT_STATUSBAR)
     queueProgressBar:SetDimensions(innerWidth, PROGRESS_HEIGHT)
-    queueProgressBar:SetAnchor(TOPLEFT, queueWindow, TOPLEFT, PADDING, footerY)
+    queueProgressBar:SetAnchor(TOPLEFT, queueSection, TOPLEFT, 0, footerY)
     queueProgressBar:SetMinMax(0, 1)
     queueProgressBar:SetValue(0)
     queueProgressBar:SetColor(0.44, 0.80, 0.62, 1)
@@ -1011,20 +1168,20 @@ local function InitializeQueueWindow()
     footerY = footerY + PROGRESS_HEIGHT + SECTION_GAP
 
     queueWithdrawAll = WINDOW_MANAGER:CreateControlFromVirtual(
-        addon.name .. "_QueueWithdrawAll", queueWindow, "ZO_DefaultButton")
+        addon.name .. "_QueueWithdrawAll", queueSection, "ZO_DefaultButton")
     queueWithdrawAll:SetDimensions(180, BUTTON_HEIGHT)
-    queueWithdrawAll:SetAnchor(TOPLEFT, queueWindow, TOPLEFT, PADDING, footerY)
+    queueWithdrawAll:SetAnchor(TOPLEFT, queueSection, TOPLEFT, 0, footerY)
     queueWithdrawAll:SetText(GetString(SI_BMW_QUEUE_WITHDRAW_ALL))
     queueWithdrawAll:SetHandler("OnClicked", function() WithdrawDialog.WithdrawAll() end)
 
     queueClear = WINDOW_MANAGER:CreateControlFromVirtual(
-        addon.name .. "_QueueClear", queueWindow, "ZO_DefaultButton")
+        addon.name .. "_QueueClear", queueSection, "ZO_DefaultButton")
     queueClear:SetDimensions(140, BUTTON_HEIGHT)
-    queueClear:SetAnchor(TOPRIGHT, queueWindow, TOPRIGHT, -PADDING, footerY)
+    queueClear:SetAnchor(TOPRIGHT, queueSection, TOPRIGHT, 0, footerY)
     queueClear:SetText(GetString(SI_BMW_QUEUE_CLEAR))
     queueClear:SetHandler("OnClicked", function() WithdrawDialog.ClearQueue() end)
 
-    queueWindow:SetHeight(footerY + BUTTON_HEIGHT + PADDING)
+    queueSection:SetHeight(footerY + BUTTON_HEIGHT)
 
     RefreshQueue()
 end
@@ -1037,23 +1194,24 @@ function WithdrawDialog.Initialize()
         return
     end
     InitializePopup()
-    InitializeQueueWindow()
+    InitializeQueueSection()
 end
 
 -- Refresh the open queue list against current stock; called from the detail
 -- refresh path so the queue's values track withdrawals/deposits while open.
 function WithdrawDialog.Refresh()
-    if queueWindow and not queueWindow:IsHidden() then
+    if popup and not popup:IsHidden() and #queue > 0 and not isWithdrawing then
+        NormalizeQueue()
         RefreshQueue()
+        UpdateQueueSectionVisibility()
     end
 end
 
--- Hard teardown when the craft bag closes: stop any run and hide both windows so
--- nothing lingers and no stepper survives with the bag shut.
+-- Hard teardown when the craft bag closes: stop any run and hide the unified
+-- withdrawal window so nothing lingers and no stepper survives with the bag shut.
 function WithdrawDialog.OnCraftBagHidden()
     if isWithdrawing then
         FinishRun()
     end
     HidePopup()
-    HideQueueWindow()
 end

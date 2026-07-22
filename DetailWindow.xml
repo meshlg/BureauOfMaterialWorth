@@ -19,21 +19,37 @@
               Cum    70px  right-aligned, anchored left of Change (cumulative
                            share of the list's total value, for the "what to
                            sell" Pareto read)
-              Change 90px  right-aligned, at the row's right edge
+              Change 90px  right-aligned, left of the contextual actions
+              Actions 48px two icon buttons revealed on hover: queue / withdraw
         -->
         <Control name="BureauOfMaterialWorth_DetailList" inherits="ZO_ScrollList" virtual="true" />
 
         <Control name="BureauOfMaterialWorth_DetailRow" virtual="true" mouseEnabled="true">
             <Dimensions y="26" />
             <Controls>
+                <Backdrop name="$(parent)Hover" hidden="true">
+                    <Anchor point="TOPLEFT" relativeTo="$(parent)" relativePoint="TOPLEFT" />
+                    <Anchor point="BOTTOMRIGHT" relativeTo="$(parent)" relativePoint="BOTTOMRIGHT" />
+                </Backdrop>
+
                 <Texture name="$(parent)Icon">
                     <Dimensions x="24" y="24" />
                     <Anchor point="LEFT" relativeTo="$(parent)" relativePoint="LEFT" offsetX="2" />
                 </Texture>
 
+                <Button name="$(parent)Withdraw" hidden="true">
+                    <Dimensions x="22" y="22" />
+                    <Anchor point="RIGHT" relativeTo="$(parent)" relativePoint="RIGHT" offsetX="-2" />
+                </Button>
+
+                <Button name="$(parent)Queue" hidden="true">
+                    <Dimensions x="22" y="22" />
+                    <Anchor point="RIGHT" relativeTo="$(parent)Withdraw" relativePoint="LEFT" offsetX="-4" />
+                </Button>
+
                 <Label name="$(parent)Change" font="ZoFontGame" horizontalAlignment="RIGHT" verticalAlignment="CENTER">
                     <Dimensions x="90" />
-                    <Anchor point="RIGHT" relativeTo="$(parent)" relativePoint="RIGHT" offsetX="-4" />
+                    <Anchor point="RIGHT" relativeTo="$(parent)Queue" relativePoint="LEFT" offsetX="-6" />
                 </Label>
 
                 <Label name="$(parent)Cum" font="ZoFontGame" horizontalAlignment="RIGHT" verticalAlignment="CENTER">

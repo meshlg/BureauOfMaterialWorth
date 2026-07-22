@@ -1,11 +1,16 @@
 ## Title: |c6FCB9FBureau|r of Material Worth
-## Version: 2.0.07071455
-## AddOnVersion: 2000
+## Version: 3.0.060753
+## AddOnVersion: 30
 ## APIVersion: 101050
 ## Author: |c6FCB9Fmeshlg|r @ArtieFox
 ## Description: Know what your Craft Bag is worth. Sums its market value (via LibPrice) with a per-profession breakdown and a clickable, scrollable material list.
 ## SavedVariables: BureauOfMaterialWorth_SavedVariables
 ## DependsOn: LibAddonMenu-2.0>=43 LibPrice>=70530
+
+; ReleaseDate: 22.07.2026
+; !!! On release, update Version, ReleaseDate, BureauOfMaterialWorth.lua, and the
+; localized SI_BMW_WINDOW_VERSION_DATE label together.
+; ---------------------------------------------------------------------------
 
 
 
