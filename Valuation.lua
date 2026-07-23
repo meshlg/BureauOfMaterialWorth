@@ -426,6 +426,12 @@ local grandSlots = 0
 local grandItems = 0
 local grandUnpricedSlots = 0
 
+-- Items that are present in the Craft Bag but have no market value by design.
+-- Keep them out of both valuation and the "unpriced" coverage warning.
+local EXCLUDED_FROM_VALUATION = {
+    [71668] = true, -- Chameleon Crown Gem: cannot be sold
+}
+
 -- "Since last visit" delta shown in the footer, recomputed once per bag open.
 -- Two baselines feed it depending on the user's deltaMode setting:
 --   "visit"   -- compare against the previous bag open; baseline persists in
@@ -694,6 +700,10 @@ local function ComputeSlot(slotIndex)
 
     local itemId = GetItemId(BAG, slotIndex)
     if not itemId or itemId <= 0 then
+        return nil
+    end
+
+    if EXCLUDED_FROM_VALUATION[itemId] then
         return nil
     end
 

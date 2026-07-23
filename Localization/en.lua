@@ -84,7 +84,7 @@ local strings = {
     -- %s = total item count.
     SI_BMW_WINDOW_SUBTITLE = "%d slots · %s stacks · %s items",
     SI_BMW_WINDOW_EMPTY = "Craft Bag is empty",
-    SI_BMW_WINDOW_VERSION_DATE = "Addon version 3.4.201855 dated July 23, 2026",
+    SI_BMW_WINDOW_VERSION_DATE = "Addon version 3.5.231844 dated July 23, 2026",
     -- Category row: the category's share of the grand total. %d = percent.
     SI_BMW_ROW_PERCENT = "%d%%",
 

@@ -516,7 +516,7 @@ function Window.Initialize()
 
     versionLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_Version", windowControl, CT_LABEL)
     versionLabel:SetFont("ZoFontGameSmall")
-    versionLabel:SetHorizontalAlignment(TEXT_ALIGN_RIGHT)
+    versionLabel:SetHorizontalAlignment(TEXT_ALIGN_CENTER)
     versionLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     versionLabel:SetAlpha(0.58)
     versionLabel:SetWidth(CurrentWidth() - PADDING * 2)

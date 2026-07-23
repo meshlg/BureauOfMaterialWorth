@@ -3,6 +3,12 @@
 
 
 
+[color=#6FCB9F]Version: 3.5.231844[/color]
+
+- Excluded Chameleon Crown Gems from valuation, snapshots, and unpriced-material warnings because they cannot be sold.
+
+
+
 [color=#6FCB9F]Version: 3.4.201855[/color]
 
 - Delayed the one-time automatic snapshot until LibPrice prices have settled, preventing zero-value entries for later-removed materials.
