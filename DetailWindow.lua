@@ -15,6 +15,7 @@ local GetTimeStamp = GetTimeStamp
 -- Palette (shared house style; see private.COLOR_* in BureauOfMaterialWorth.lua)
 local COLOR_ACCENT = private.COLOR_ACCENT
 local COLOR_MUTED  = private.COLOR_MUTED
+local COLOR_WARN   = private.COLOR_WARN
 local COLOR_GAIN   = private.COLOR_GAIN
 local COLOR_LOSS   = private.COLOR_LOSS
 

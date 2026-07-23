@@ -5,7 +5,7 @@ local SAVED_VARIABLES_NAME = "BureauOfMaterialWorth_SavedVariables"
 BureauOfMaterialWorth = {
     name = ADDON_NAME,
     savedVariablesName = SAVED_VARIABLES_NAME,
-    version = "3.3.195326",
+    version = "3.4.201855",
     debugMode = 1,  -- 0=off, 1=errors, 2=warnings, 3=info, 4=verbose
 }
 
@@ -316,6 +316,12 @@ local function DumpStatus()
     -- ZO_LocalizeDecimalNumber errors on non-integers, so round before formatting.
     ChatInfo(SI_BMW_MSG_STATUS_TOTAL, private.FormatGold(grandTotal or 0))
     ChatInfo(SI_BMW_MSG_STATUS_SLOTS, pricedSlots or 0, unpricedSlots or 0)
+
+    if valuation.GetInventoryUpdateStats then
+        local totalEvents, visibleEvents, rescans = valuation.GetInventoryUpdateStats()
+        ChatInfo(SI_BMW_MSG_STATUS_FULL_UPDATES,
+            totalEvents or 0, visibleEvents or 0, rescans or 0)
+    end
 end
 
 local function SetDebugMode(level, suppressOutput)

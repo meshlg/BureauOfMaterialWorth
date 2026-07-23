@@ -436,7 +436,6 @@ local grandUnpricedSlots = 0
 -- price drift (restart + price reimport, same stock) reports no delta.
 local deltaSinceLastVisit = nil
 local sessionBaseGold = nil   -- session-mode baseline: gold at first open this session
-local sessionBaseItems = nil  -- session-mode baseline: item count alongside it
 local sessionBaseline = nil   -- full composition of the first session visit, for its delta breakdown
 local visitNotified = false   -- emitted the "since last visit" chat line yet this session?
 local visitFinalizePending = false  -- an open is waiting to finalize its delta/history once prices settle
@@ -604,6 +603,10 @@ end
 local REFRESH_DELAY_MS = 100
 local refreshQueued = false
 local REFRESH_TIMER_NAME = addon.name .. "_QueuedRefresh"
+local fullUpdateRescanPending = false
+local fullUpdateEventCount = 0
+local fullUpdateVisibleEventCount = 0
+local fullUpdateRescanCount = 0
 
 -- Unpriced-slot self-heal
 -- ---------------------------------------------------------------------------
@@ -787,8 +790,9 @@ local function ResetAggregates()
 end
 
 -- Full single-pass scan of the craft bag, rebuilding every aggregate from the
--- (memoized) price cache. This is the only O(slots) operation, and it runs at
--- most once per craft-bag open (and only when dirty) or on explicit refresh.
+-- (memoized) price cache. This is the only O(slots) operation. It runs on a
+-- dirty bag open, an explicit refresh, or once for a coalesced burst of full
+-- inventory updates while the bag is visible.
 local function FullRescan()
     ResetAggregates()
 
@@ -837,6 +841,15 @@ local function QueueWindowRefresh()
     EVENT_MANAGER:RegisterForUpdate(REFRESH_TIMER_NAME, REFRESH_DELAY_MS, function()
         EVENT_MANAGER:UnregisterForUpdate(REFRESH_TIMER_NAME)
         refreshQueued = false
+
+        if fullUpdateRescanPending then
+            fullUpdateRescanPending = false
+            if isBagVisible and isDirty then
+                FullRescan()
+                fullUpdateRescanCount = fullUpdateRescanCount + 1
+            end
+        end
+
         RefreshWindow()
     end)
 end
@@ -925,7 +938,7 @@ local function StartPriceRetry()
             -- Prices have settled (fully healed, or we gave up): capture the visit
             -- baseline and history point now against the healed total, not the
             -- understated first-scan figure. No-op if already finalized.
-            FinalizeVisit()
+            FinalizeVisit(true)
         end
     end)
 end
@@ -957,15 +970,20 @@ local function OnSingleSlotUpdate(eventCode, bagId, slotIndex, isNewItem, soundC
 end
 
 -- EVENT_INVENTORY_FULL_UPDATE carries no bagId (unlike the single-slot event),
--- so there is nothing to filter on here; a full update is not bag-scoped. We
--- simply rescan the craft bag from scratch (or mark dirty while it is closed).
+-- so there is nothing to filter on here; a full update is not bag-scoped. Mark
+-- the valuation dirty and coalesce a burst into one rescan through the existing
+-- refresh timer. While the bag is closed, defer all work until the next open.
 local function OnFullInventoryUpdate()
+    fullUpdateEventCount = fullUpdateEventCount + 1
+
     if not isBagVisible then
         isDirty = true
         return
     end
 
-    FullRescan()
+    fullUpdateVisibleEventCount = fullUpdateVisibleEventCount + 1
+    isDirty = true
+    fullUpdateRescanPending = true
     QueueWindowRefresh()
 end
 
@@ -992,7 +1010,9 @@ function Valuation.Initialize()
 end
 
 -- Finalize the "since last visit" delta, advance the persisted baseline, emit the
--- once-per-session chat line, and record the value-history point. Split out of
+-- once-per-session chat line, and record the value-history point. When
+-- `pricesReadyForSnapshot` is true, also create the one-time automatic snapshot.
+-- Split out of
 -- OnCraftBagShown because all of these consume the just-computed grandGold: if the
 -- first scan left slots unpriced (price source still importing after login), running
 -- this immediately would bake an understated total into both the persisted baseline
@@ -1002,7 +1022,7 @@ end
 -- budget (and, as a backstop, on hide). Guarded to run at most once per open via
 -- visitFinalizePending. (Assigns the forward-declared local above, so the
 -- earlier StartPriceRetry can call it.)
-function FinalizeVisit()
+function FinalizeVisit(pricesReadyForSnapshot)
     if not visitFinalizePending then
         return
     end
@@ -1012,37 +1032,59 @@ function FinalizeVisit()
     local comparisonGold = nil
     local visitDetails, currentBaseline
 
+    -- A snapshot captured during LibPrice's startup import can permanently save
+    -- removed materials at zero value. Only create the automatic baseline after
+    -- the retry completes; an early bag close leaves it pending for a later open.
+    if pricesReadyForSnapshot and sv and not sv.autoSnapshotDone
+        and not Valuation.HasSnapshot() and grandSlots > 0 then
+        sv.autoSnapshotDone = true
+        Valuation.CaptureSnapshot()
+    end
+
     -- "Since last visit" delta, computed once per open so incremental updates
     -- during the visit don't move it under the user. The baseline depends on the
-    -- configured mode; in both, the gold delta is gated on the item count
-    -- changing so a pure price drift (restart + reimport, same stock) shows
-    -- nothing rather than a misleading "+2M".
+    -- configured mode; in both, the gold delta is gated on an actual material
+    -- quantity change so a pure price drift (restart + reimport, same stock)
+    -- shows nothing rather than a misleading "+2M".
     local mode = (sv and sv.deltaMode) or "visit"
 
     if mode == "session" then
         -- Compare against the first open of this session; baseline lives in
         -- memory and resets on reloadui/logout. Establish it on first open.
         comparisonGold = sessionBaseGold
-        if sessionBaseGold ~= nil and sessionBaseItems ~= nil and sessionBaseItems ~= grandItems then
-            deltaSinceLastVisit = grandGold - sessionBaseGold
+        if sessionBaseGold ~= nil and sessionBaseline then
             visitDetails = BuildVisitDeltaDetails(sessionBaseline)
+            if visitDetails and visitDetails.hasQuantityChange then
+                deltaSinceLastVisit = grandGold - sessionBaseGold
+            else
+                deltaSinceLastVisit = nil
+            end
         else
             deltaSinceLastVisit = nil
         end
         if sessionBaseGold == nil then
             sessionBaseGold = grandGold
-            sessionBaseItems = grandItems
             sessionBaseline = CaptureVisitBaseline()
         end
     elseif sv then
         -- Visit mode: compare against the previous open, then advance the
         -- persisted baseline so the next visit measures from here.
         local previousGold = sv.lastVisitGold
-        local previousItems = sv.lastVisitItems
         comparisonGold = previousGold
-        if previousGold ~= nil and previousItems ~= nil and previousItems ~= grandItems then
+        local previousItems = sv.lastVisitItems
+        local previousBaseline = sv.lastVisitBaseline
+        if previousGold ~= nil and previousBaseline and previousBaseline.materials then
+            visitDetails, currentBaseline = BuildVisitDeltaDetails(previousBaseline)
+            if visitDetails and visitDetails.hasQuantityChange then
+                deltaSinceLastVisit = grandGold - previousGold
+            else
+                deltaSinceLastVisit = nil
+            end
+        elseif previousGold ~= nil and previousItems ~= nil and previousItems ~= grandItems then
+            -- Older saves may have aggregate totals but no material baseline.
+            -- Preserve their previous behavior for one visit, then replace it
+            -- below with the composition-aware baseline format.
             deltaSinceLastVisit = grandGold - previousGold
-            visitDetails, currentBaseline = BuildVisitDeltaDetails(sv.lastVisitBaseline)
         else
             deltaSinceLastVisit = nil
         end
@@ -1098,25 +1140,6 @@ function Valuation.OnCraftBagShown()
         FullRescan()
     end
 
-    -- One-time convenience baseline: take an automatic snapshot the first time a
-    -- populated bag is opened and no snapshot exists yet, so the "Changes" view
-    -- works without first pressing "Remember". Strictly gated so it never
-    -- surprises a user or wipes their data:
-    --   * not HasSnapshot()  -- never overwrite an existing snapshot; this is the
-    --     guard that protects a manual snapshot (a user with one is never touched).
-    --   * autoSnapshotDone    -- persisted, so it fires at most once ever and a
-    --     later manual "Clear" does not re-arm it.
-    --   * grandSlots > 0      -- real content, not an empty bag captured before
-    --     login finished populating it.
-    -- It is NOT a per-login capture: opening/closing the bag across sessions never
-    -- re-snapshots. After this one time the snapshot is fully user-owned.
-    local sv = private.savedVars
-    if sv and not sv.autoSnapshotDone
-        and not Valuation.HasSnapshot() and grandSlots > 0 then
-        sv.autoSnapshotDone = true
-        Valuation.CaptureSnapshot()
-    end
-
     -- Defer the delta/baseline/history capture until prices have settled. If the
     -- first scan is fully priced, finalize now; otherwise the price source is
     -- probably still importing (common right after login) -- arm the slow
@@ -1131,7 +1154,7 @@ function Valuation.OnCraftBagShown()
     -- fill in on their own instead of waiting for a manual /bmw refresh. When
     -- everything is already priced, StartPriceRetry is a no-op, so finalize here.
     if grandUnpricedSlots <= 0 then
-        FinalizeVisit()
+        FinalizeVisit(true)
     else
         StartPriceRetry()
     end
@@ -1144,7 +1167,7 @@ function Valuation.OnCraftBagHidden()
     -- Backstop: if the bag is closed before the self-heal finished (or was never
     -- fully priced), finalize now so the visit baseline still advances and the
     -- history point is recorded exactly once per open.
-    FinalizeVisit()
+    FinalizeVisit(false)
 end
 
 -- Explicit user-driven refresh (/bmw refresh): drop the price cache so prices
@@ -1249,6 +1272,10 @@ end
 
 function Valuation.GetStatus()
     return grandGold, grandSlots - grandUnpricedSlots, grandUnpricedSlots
+end
+
+function Valuation.GetInventoryUpdateStats()
+    return fullUpdateEventCount, fullUpdateVisibleEventCount, fullUpdateRescanCount
 end
 
 -- The value-history samples in chronological order (oldest -> newest), each

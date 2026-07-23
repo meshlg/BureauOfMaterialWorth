@@ -106,7 +106,8 @@ materials the total updates on its own.
   Rows are sorted by the biggest gold movement first.
 - There is **one snapshot** and it persists across sessions. The addon creates a
   one-time automatic baseline when you first open a **non-empty** Craft Bag after
-  installing it, so Changes starts collecting useful information immediately.
+  installing it and LibPrice has settled, so Changes starts collecting useful
+  information immediately.
   Pressing Remember at any time replaces that baseline with a snapshot you chose.
   Clearing the snapshot leaves Changes empty until you press Remember again.
 - As with the footer's value-change line, the diff counts **only real stock
@@ -158,9 +159,10 @@ materials the total updates on its own.
 
 > **How the value-change delta works.** Craft Bag market prices do **not** update
 > live - a price source (Master Merchant / TTC / ATT) only refreshes its data
-> across a game restart and reimport. The row appears only when the total item
-> count changed since the baseline, so a restart-and-reimport that only re-values
-> an unchanged bag does not show a misleading "+2M". When stock *did* change,
+> across a game restart and reimport. The row appears only when a material's
+> quantity changed since the baseline, so a restart-and-reimport that only
+> re-values an unchanged bag does not show a misleading "+2M". When stock *did*
+> change,
 > however, the displayed total naturally includes both the value of material
 > movement and any simultaneous price revaluation. Hover the row for that split;
 > click it to list the materials whose quantities changed. You choose the baseline

@@ -84,7 +84,7 @@ local strings = {
     -- %s = total item count.
     SI_BMW_WINDOW_SUBTITLE = "%d slots · %s stacks · %s items",
     SI_BMW_WINDOW_EMPTY = "Craft Bag is empty",
-    SI_BMW_WINDOW_VERSION_DATE = "Addon version 3.3.195326 dated July 22, 2026",
+    SI_BMW_WINDOW_VERSION_DATE = "Addon version 3.4.201855 dated July 22, 2026",
     -- Category row: the category's share of the grand total. %d = percent.
     SI_BMW_ROW_PERCENT = "%d%%",
 
@@ -226,6 +226,7 @@ local strings = {
     -- Preset buttons. The plain counts (1/10/100) show the number itself; the
     -- stack presets use these so "200" reads as "1 stack", "2000" as "10 stacks".
     SI_BMW_WITHDRAW_PRESET_STACK = "%d stack",
+    SI_BMW_WITHDRAW_PRESET_STACKS_FEW = "%d stacks",
     SI_BMW_WITHDRAW_PRESET_STACKS = "%d stacks",
     SI_BMW_WITHDRAW_CONFIRM = "Withdraw",
     SI_BMW_WITHDRAW_ADD_TO_QUEUE = "Add to queue",
@@ -340,9 +341,10 @@ local strings = {
 
     -- Chat messages
     SI_BMW_MSG_LIBPRICE_MISSING = "LibPrice is not installed. Bureau of Material Worth needs LibPrice (and a price source such as Master Merchant or Tamriel Trade Centre) to work.",
-    SI_BMW_MSG_VERSION_DEBUG = "Version %s | Debug: %s (%d)",
+    SI_BMW_MSG_VERSION_DEBUG = "Version %s, debug: %s (%d)",
     SI_BMW_MSG_STATUS_TOTAL = "Craft Bag value: %s.",
-    SI_BMW_MSG_STATUS_SLOTS = "Priced slots: %d | unpriced slots: %d.",
+    SI_BMW_MSG_STATUS_SLOTS = "Priced slots: %d, unpriced slots: %d.",
+    SI_BMW_MSG_STATUS_FULL_UPDATES = "Full inventory updates this session: %d total, %d while open, %d coalesced rescans.",
     -- First-open-of-session announcement. _DELTA: %s current total, %s signed
     -- change (both already include the gold icon). _TOTAL: %s current total.
     SI_BMW_MSG_VISIT_DELTA = "Craft Bag is worth %s (%s since last visit).",

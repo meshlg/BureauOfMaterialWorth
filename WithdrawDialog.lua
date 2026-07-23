@@ -104,7 +104,16 @@ local function PresetCaption(count)
         return ZO_LocalizeDecimalNumber(count)
     end
     local stacks = mathfloor(count / STACK_SIZE)
-    local key = stacks == 1 and SI_BMW_WITHDRAW_PRESET_STACK or SI_BMW_WITHDRAW_PRESET_STACKS
+    local lastTwo = stacks % 100
+    local lastDigit = stacks % 10
+    local key
+    if lastDigit == 1 and lastTwo ~= 11 then
+        key = SI_BMW_WITHDRAW_PRESET_STACK
+    elseif lastDigit >= 2 and lastDigit <= 4 and (lastTwo < 12 or lastTwo > 14) then
+        key = SI_BMW_WITHDRAW_PRESET_STACKS_FEW
+    else
+        key = SI_BMW_WITHDRAW_PRESET_STACKS
+    end
     return stringformat(GetString(key), stacks)
 end
 
@@ -491,6 +500,14 @@ local function SetRequested(qty)
     qty = tonumber(qty) or 0
     qty = mathmax(0, mathmin(qty, curMax))
     curRequested = qty
+
+    -- A queued material can still be edited through the single-material view.
+    -- Keep its queued quantity in sync so switching to batch mode preserves the
+    -- value the player just selected.
+    local queuedEntry = curItemId and queueByItemId[curItemId]
+    if queuedEntry then
+        queuedEntry.qty = qty
+    end
 
     -- Reflect the clamped value back into the editbox without re-triggering the
     -- sanitizer (SetText fires OnTextChanged).

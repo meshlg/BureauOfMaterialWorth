@@ -72,14 +72,13 @@ function Settings.InitializeSavedVariables()
     -- segregates the data per megaserver.
     local worldName = GetWorldName()
 
-    -- One-time migration: earlier versions saved everything under the shared
-    -- "Default" profile. If this server has no data yet but a legacy "Default"
-    -- bucket exists, adopt it for the server we first log in on after updating,
-    -- so accumulated settings/priceHistory carry over instead of resetting.
+    -- Earlier versions saved everything under the shared "Default" profile.
+    -- Seed each server from an independent copy when it is first opened. Keep
+    -- the legacy bucket so a later first login on another megaserver can migrate
+    -- the same settings/history without sharing mutable tables between servers.
     local raw = _G[addon.savedVariablesName]
     if type(raw) == "table" and raw["Default"] ~= nil and raw[worldName] == nil then
-        raw[worldName] = raw["Default"]
-        raw["Default"] = nil
+        raw[worldName] = ZO_DeepTableCopy(raw["Default"])
     end
 
     private.savedVars = ZO_SavedVars:NewAccountWide(

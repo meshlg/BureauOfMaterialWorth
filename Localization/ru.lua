@@ -86,7 +86,7 @@ local strings = {
     -- %s = общее число предметов.
     [SI_BMW_WINDOW_SUBTITLE] = "%d ячеек · %s стаков · %s предметов",
     [SI_BMW_WINDOW_EMPTY] = "Ремесленная сумка пуста",
-    [SI_BMW_WINDOW_VERSION_DATE] = "Версия аддона 3.3.195326 от 22.07.2026",
+    [SI_BMW_WINDOW_VERSION_DATE] = "Версия аддона 3.4.201855 от 22.07.2026",
     [SI_BMW_ROW_PERCENT] = "%d%%",
 
     -- Window: per-category hover tooltip
@@ -205,6 +205,7 @@ local strings = {
     [SI_BMW_WITHDRAW_TOTAL_VALUE] = "Общая стоимость: %s",
     [SI_BMW_WITHDRAW_QTY_LABEL] = "Количество",
     [SI_BMW_WITHDRAW_PRESET_STACK] = "%d стак",
+    [SI_BMW_WITHDRAW_PRESET_STACKS_FEW] = "%d стака",
     [SI_BMW_WITHDRAW_PRESET_STACKS] = "%d стаков",
     [SI_BMW_WITHDRAW_CONFIRM] = "Извлечь",
     [SI_BMW_WITHDRAW_ADD_TO_QUEUE] = "В очередь",
@@ -314,9 +315,10 @@ local strings = {
 
     -- Chat messages
     [SI_BMW_MSG_LIBPRICE_MISSING] = "LibPrice не установлен. Bureau of Material Worth требует LibPrice (и источник цен, например Master Merchant или Tamriel Trade Centre) для работы.",
-    [SI_BMW_MSG_VERSION_DEBUG] = "Версия %s | Отладка: %s (%d)",
+    [SI_BMW_MSG_VERSION_DEBUG] = "Версия %s, отладка: %s (%d)",
     [SI_BMW_MSG_STATUS_TOTAL] = "Стоимость ремесленной сумки: %s.",
-    [SI_BMW_MSG_STATUS_SLOTS] = "Ячеек с ценой: %d | без цены: %d.",
+    [SI_BMW_MSG_STATUS_SLOTS] = "Ячеек с ценой: %d, без цены: %d.",
+    [SI_BMW_MSG_STATUS_FULL_UPDATES] = "Полных обновлений инвентаря за сеанс: %d всего, %d при открытой сумке, %d объединённых пересчётов.",
     [SI_BMW_MSG_VISIT_DELTA] = "Ремесленная сумка стоит %s (%s с прошлого визита).",
     [SI_BMW_MSG_VISIT_TOTAL] = "Ремесленная сумка стоит %s.",
     [SI_BMW_MSG_SIGNIFICANT_DELTA] = "Стоимость ремесленной сумки изменилась на %s (%d%%).",

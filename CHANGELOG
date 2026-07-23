@@ -1,11 +1,28 @@
+[font=Palatino Linotype][center][size=6][b][color=#6FCB9F]Bureau of Material Worth[/color][/b][/size]
+[color=#8C8A82]Know what your Craft Bag is worth.[/color][/center]
 
-Version: 3.3.195326
+
+
+[color=#6FCB9F]Version: 3.4.201855[/color]
+
+- Delayed the one-time automatic snapshot until LibPrice prices have settled, preventing zero-value entries for later-removed materials.
+- Fixed visit/session value changes so material swaps are reported even when the total item count is unchanged.
+- Fixed queued withdrawal quantities so an edit in the single-material view is retained for batch withdrawal.
+- Corrected Russian stack preset captions for the singular, few, and many forms.
+- Fixed legacy SavedVariables migration so NA, EU, and PTS can each inherit an independent copy without removing the shared Default profile after the first login.
+- Coalesced bursts of full inventory updates into a single delayed Craft Bag rescan while preserving lazy updates when the bag is closed.
+- Added session counters for full inventory updates and coalesced rescans to `/bmw status` for in-game performance diagnostics.
+- Replaced unsafe vertical-bar separators in `/bmw status` messages to prevent ESO chat-link parsing.
+
+
+
+[color=#6FCB9F]Version: 3.3.195326[/color]
 
 - Fixed an error when rendering the value-change footer for deltas with localized thousands separators.
 
 
 
-Version: 3.2.174352
+[color=#6FCB9F]Version: 3.2.174352[/color]
 
 - Standardized monetary values on the gold icon across chat messages, tooltips, history, and detail views.
 - Added a breakdown for the visit/session delta: hover the existing footer row to separate stock movement from price revaluation, or click it to inspect changed materials.
@@ -14,7 +31,8 @@ Version: 3.2.174352
 - Compacted price history and material baselines in SavedVariables while preserving existing snapshots, price changes, and visit-delta diagnostics.
 
 
-Version: 3.1.071108
+
+[color=#6FCB9F]Version: 3.1.071108[/color]
 
 - Improved English and Russian localization: clarified material-change labels, corrected terminology, and completed missing Russian UI strings.
 - Reduced SavedVariables size for new material snapshots by storing only the data required for comparison.
@@ -22,7 +40,7 @@ Version: 3.1.071108
 
 
 
-Version: 3.0.220726
+[color=#6FCB9F]Version: 3.0.220726[/color]
 
 Major Milestone Release – First 3.0 Launch
 
@@ -41,3 +59,5 @@ Major Milestone Release – First 3.0 Launch
 - Redesigned main panel: enhanced total, subdued footer, highlighted most valuable category, action link with arrow, compact chart.
 - Added version date at the bottom of the main window: Addon version as of 22.07.2026.
 - Added ReleaseDate to the manifest along with a reminder to update both version and date together.
+
+[/font]
