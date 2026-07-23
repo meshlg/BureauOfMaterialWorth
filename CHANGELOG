@@ -1,4 +1,10 @@
 
+Version: 3.3.195326
+
+- Fixed an error when rendering the value-change footer for deltas with localized thousands separators.
+
+
+
 Version: 3.2.174352
 
 - Standardized monetary values on the gold icon across chat messages, tooltips, history, and detail views.

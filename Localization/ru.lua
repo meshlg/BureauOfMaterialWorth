@@ -86,7 +86,7 @@ local strings = {
     -- %s = общее число предметов.
     [SI_BMW_WINDOW_SUBTITLE] = "%d ячеек · %s стаков · %s предметов",
     [SI_BMW_WINDOW_EMPTY] = "Ремесленная сумка пуста",
-    [SI_BMW_WINDOW_VERSION_DATE] = "Версия аддона 3.2.174352 от 22.07.2026",
+    [SI_BMW_WINDOW_VERSION_DATE] = "Версия аддона 3.3.195326 от 22.07.2026",
     [SI_BMW_ROW_PERCENT] = "%d%%",
 
     -- Window: per-category hover tooltip

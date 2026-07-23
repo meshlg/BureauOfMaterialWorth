@@ -743,7 +743,7 @@ local function RenderFooter()
         -- texture left outside Colorize since textures aren't tinted.
         footerDeltaRow.value:SetText(arrow .. " " .. Colorize(color,
             stringformat(GetString(SI_BMW_FOOTER_DELTA_VALUE),
-                ZO_LocalizeDecimalNumber(magnitude) .. " " .. GOLD_ICON)))
+                    magnitude .. " " .. GOLD_ICON)))
     else
         footerDeltaRow.container:SetHidden(true)
     end
