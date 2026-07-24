@@ -5,9 +5,11 @@ local Window = addon.Window
 local private = addon.private
 
 local GetString = GetString
+local GetGameTimeMilliseconds = GetGameTimeMilliseconds
 local stringformat = string.format
 local zo_round = zo_round
 local mathabs = math.abs
+local mathsin = math.sin
 
 -- Palette (shared house style; see private.COLOR_* in BureauOfMaterialWorth.lua)
 -- ---------------------------------------------------------------------------
@@ -35,18 +37,21 @@ local MIN_WINDOW_WIDTH = 400
 local MAX_WINDOW_WIDTH = 600
 local WINDOW_WIDTH_STEP = 10
 local PADDING        = 12
-local TITLE_HEIGHT   = 22
-local TITLE_TO_TOTAL_GAP = 10
+local ADDON_NAME_HEIGHT = 22
+local PROFILE_HEIGHT = 16
+local TOTAL_TO_PROFILE_GAP = 5
+local PROFILE_TO_SUBTITLE_GAP = 1
 local TOTAL_HEIGHT   = 34
-local TOTAL_TO_SUBTITLE_GAP = 5
 local SUBTITLE_HEIGHT = 18
 local ROW_HEIGHT     = 22
 local DIVIDER_GAP    = 10   -- vertical space a divider occupies
 local FOOTER_LINE    = 16
-local SECTION_GAP    = 6    -- small gap between blocks
-local SPARK_TOP_GAP  = 30   -- breathing room between footer guidance and history caption
-local VERSION_GAP    = FOOTER_LINE + SECTION_GAP
-local HEADER_TO_DIVIDER_GAP = 12
+local SECTION_GAP    = 4    -- compact, consistent separation between blocks
+local SPARK_TOP_GAP  = 12   -- separation between footer and history caption
+local VERSION_LINE_GAP = 2
+local VERSION_DATE_HEIGHT = FOOTER_LINE
+local VERSION_TO_TOTAL_GAP = 8
+local HEADER_TO_DIVIDER_GAP = 1
 local FOOTER_ALPHA   = 0.82
 local LEADER_MARKER_WIDTH = 3
 local LEADER_MARKER_COLOR = { 0.44, 0.80, 0.62, 0.95 }
@@ -196,10 +201,10 @@ end
 -- Runtime control references, created once in Initialize().
 local windowControl   -- top-level container
 local backdrop        -- background + border fill (toggled by appearance settings)
-local titleLabel      -- "Craft Bag Worth"
 local profileLabel    -- "@account · Character" on the right of the title line
 local totalLabel      -- prominent grand-total gold figure
 local subtitleLabel   -- "<n> slots · <n> stacks · <n> items"
+local versionNameLabel -- compact addon name at the bottom of the panel
 local versionLabel    -- compact release date at the bottom of the panel
 local dividerTop      -- line under the header block
 local dividerBottom   -- line above the footer
@@ -228,10 +233,45 @@ local rowPool         -- reusable category rows { container, name, gold, data }
 -- and there is nothing on the per-frame path.
 local FOOTER_TICK_MS = 5000
 local FOOTER_TIMER_NAME = addon.name .. "_FooterTick"
+local TOTAL_GLOW_TICK_MS = 50
+local TOTAL_GLOW_TIMER_NAME = addon.name .. "_TotalGlow"
 local lastSnapshot  -- cached snapshot so the footer tick can re-read counts/time
 
 local function GetSavedVars()
     return private.savedVars or {}
+end
+
+-- Hovering the grand total exposes its sale-fee tooltip. The effect is applied
+-- directly to the label, never to a background or the whole header row.
+local totalGlowActive = false
+local function RenderTotalText()
+    if totalLabel and lastSnapshot then
+        totalLabel:SetText(FormatGold(lastSnapshot.gold,
+            totalGlowActive and "FFE9A0" or nil))
+    end
+end
+
+local function StopTotalGlow()
+    EVENT_MANAGER:UnregisterForUpdate(TOTAL_GLOW_TIMER_NAME)
+    totalGlowActive = false
+    if totalLabel then
+        totalLabel:SetAlpha(1)
+        RenderTotalText()
+    end
+end
+
+local function StartTotalGlow()
+    if not totalLabel then
+        return
+    end
+
+    totalGlowActive = true
+    RenderTotalText()
+    EVENT_MANAGER:UnregisterForUpdate(TOTAL_GLOW_TIMER_NAME)
+    EVENT_MANAGER:RegisterForUpdate(TOTAL_GLOW_TIMER_NAME, TOTAL_GLOW_TICK_MS, function()
+        local phase = GetGameTimeMilliseconds() / 700
+        totalLabel:SetAlpha(0.92 + (mathsin(phase) + 1) * 0.04)
+    end)
 end
 
 -- The window anchors to the left edge of the Craft Bag. In the guild store the
@@ -377,6 +417,12 @@ local function AcquireRow(index)
         InformationTooltip:AddLine(data.name, "ZoFontHeader2",
             ZO_NORMAL_TEXT:UnpackRGB())
         ZO_Tooltip_AddDivider(InformationTooltip)
+        if row.isLeader then
+            InformationTooltip:AddLine(GetString(SI_BMW_TOOLTIP_TOP_CATEGORY),
+                "ZoFontGame", 0.44, 0.80, 0.62)
+            InformationTooltip:AddLine("", "ZoFontGame")
+            InformationTooltip:AddLine("", "ZoFontGame")
+        end
         InformationTooltip:AddLine(stringformat(GetString(SI_BMW_TOOLTIP_VALUE),
             FormatGold(data.gold)), "ZoFontGame", 1, 0.82, 0.25)
         -- Net if sold through a guild trader (after the 1% + 7% fees). Only shown
@@ -447,39 +493,49 @@ function Window.Initialize()
     backdrop:SetInsets(2, 2, -2, -2)
     Window.ApplyAppearance()
 
-    titleLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_Title", windowControl, CT_LABEL)
-    titleLabel:SetFont("ZoFontWinH4")
-    titleLabel:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
-    titleLabel:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, PADDING)
-    titleLabel:SetText(Colorize(COLOR_ACCENT, GetString(SI_BMW_WINDOW_TITLE)))
+    versionNameLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_VersionName", windowControl, CT_LABEL)
+    versionNameLabel:SetFont("ZoFontWinH4")
+    versionNameLabel:SetHorizontalAlignment(TEXT_ALIGN_CENTER)
+    versionNameLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+    versionNameLabel:SetAlpha(1)
+    versionNameLabel:SetWidth(CurrentWidth() - PADDING * 2)
+    versionNameLabel:SetHeight(ADDON_NAME_HEIGHT)
+    versionNameLabel:SetText(Colorize(COLOR_ACCENT, GetString(SI_BMW_WINDOW_ADDON_NAME)))
 
-    -- Account/character identity on the right of the title line, in the gap beside
-    -- the short title. Right-aligned and ellipsized so a long handle never collides
-    -- with the title; vertically centered on the title's row. Filled and shown/
-    -- hidden by Window.Update per the showProfile setting.
+    versionLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_Version", windowControl, CT_LABEL)
+    versionLabel:SetFont("ZoFontGameSmall")
+    versionLabel:SetHorizontalAlignment(TEXT_ALIGN_CENTER)
+    versionLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+    versionLabel:SetAlpha(0.58)
+    versionLabel:SetWidth(CurrentWidth() - PADDING * 2)
+    versionLabel:SetHeight(VERSION_DATE_HEIGHT)
+    versionLabel:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_WINDOW_VERSION_DATE)))
+    versionNameLabel:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, PADDING)
+    versionLabel:SetAnchor(TOPLEFT, versionNameLabel, BOTTOMLEFT, 0, VERSION_LINE_GAP)
+
+    -- Account/character identity follows the bag composition line.
     profileLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_Profile", windowControl, CT_LABEL)
     profileLabel:SetFont("ZoFontGameSmall")
-    profileLabel:SetHorizontalAlignment(TEXT_ALIGN_RIGHT)
+    profileLabel:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
     profileLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+    profileLabel:SetAlpha(0.78)
     profileLabel:SetMaxLineCount(1)
     profileLabel:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
-    profileLabel:SetAnchor(TOPRIGHT, windowControl, TOPRIGHT, -PADDING, PADDING)
-    -- Leave room for the title on the left so the two never overlap; the title is
-    -- short ("Craft Bag Worth"), so the right ~55% is free for the handle.
-    profileLabel:SetWidth(CurrentWidth() * 0.55)
-    profileLabel:SetHeight(TITLE_HEIGHT)
+    profileLabel:SetWidth(CurrentWidth() - PADDING * 2)
+    profileLabel:SetHeight(PROFILE_HEIGHT)
 
     totalLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_Total", windowControl, CT_LABEL)
     totalLabel:SetFont("ZoFontWinH1")
     totalLabel:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
     totalLabel:SetDimensions(CurrentWidth() - PADDING * 2, TOTAL_HEIGHT)
-    totalLabel:SetAnchor(TOPLEFT, titleLabel, BOTTOMLEFT, 0, TITLE_TO_TOTAL_GAP)
+    totalLabel:SetAnchor(TOPLEFT, versionLabel, BOTTOMLEFT, 0, VERSION_TO_TOTAL_GAP)
     -- Hover the grand total for the "net if sold" breakdown: the guild-store
     -- listing fee (1%) and sales tax (7%) itemized, then the gold left after both.
     -- The Craft Bag total is valued at market/list price, so this answers "what
     -- would I actually pocket selling all of this through a guild trader".
     totalLabel:SetMouseEnabled(true)
     totalLabel:SetHandler("OnMouseEnter", function(self)
+        StartTotalGlow()
         local gross = lastSnapshot and lastSnapshot.gold or 0
         if gross <= 0 then
             return
@@ -504,6 +560,7 @@ function Window.Initialize()
             FormatGold(net)), "ZoFontGame", 0.44, 0.80, 0.62)
     end)
     totalLabel:SetHandler("OnMouseExit", function()
+        StopTotalGlow()
         ClearTooltip(InformationTooltip)
     end)
 
@@ -511,17 +568,9 @@ function Window.Initialize()
     subtitleLabel:SetFont("ZoFontGameSmall")
     subtitleLabel:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
     subtitleLabel:SetAlpha(0.78)
-    subtitleLabel:SetAnchor(TOPLEFT, totalLabel, BOTTOMLEFT, 0, TOTAL_TO_SUBTITLE_GAP)
+    subtitleLabel:SetAnchor(TOPLEFT, profileLabel, BOTTOMLEFT, 0, PROFILE_TO_SUBTITLE_GAP)
     subtitleLabel:SetWidth(CurrentWidth() - PADDING * 2)
-
-    versionLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_Version", windowControl, CT_LABEL)
-    versionLabel:SetFont("ZoFontGameSmall")
-    versionLabel:SetHorizontalAlignment(TEXT_ALIGN_CENTER)
-    versionLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
-    versionLabel:SetAlpha(0.58)
-    versionLabel:SetWidth(CurrentWidth() - PADDING * 2)
-    versionLabel:SetHeight(FOOTER_LINE)
-    versionLabel:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_WINDOW_VERSION_DATE)))
+    profileLabel:SetAnchor(TOPLEFT, totalLabel, BOTTOMLEFT, 0, TOTAL_TO_PROFILE_GAP)
 
     dividerTop = CreateDivider(addon.name .. "_DividerTop")
     dividerBottom = CreateDivider(addon.name .. "_DividerBottom")
@@ -574,6 +623,9 @@ function Window.Initialize()
         if detail and detail.ShowVisitDiff and valuation and valuation.GetLastVisitDeltaDetails
             and valuation.GetLastVisitDeltaDetails() then
             detail.ShowVisitDiff()
+            if valuation.AcknowledgeVisitDelta then
+                valuation.AcknowledgeVisitDelta()
+            end
         end
     end)
     footerDeltaRow.container:SetHandler("OnMouseEnter", function(self)
@@ -597,6 +649,8 @@ function Window.Initialize()
         InformationTooltip:AddLine(stringformat(GetString(SI_BMW_FOOTER_DELTA_TOOLTIP_PRICES),
             SignedAmount(details.priceGold or 0)),
             "ZoFontGame", 0.86, 0.85, 0.78)
+        InformationTooltip:AddLine(GetString(SI_BMW_FOOTER_DELTA_TOOLTIP_ACCUMULATION),
+            "ZoFontGame", 0.78, 0.77, 0.72)
         InformationTooltip:AddLine(GetString(SI_BMW_FOOTER_DELTA_TOOLTIP_CLICK),
             "ZoFontGame", 0.82, 0.56, 0.37)
     end)
@@ -726,9 +780,8 @@ local function RenderFooter()
             Colorize(countColor, countText) .. Colorize(COLOR_MUTED, SourceSuffix()))
     end
 
-    -- Value-change delta. Hidden when there is no baseline yet or the total is
-    -- unchanged. The label reflects the configured baseline mode; the value is
-    -- an arrow (direction) + colored magnitude.
+    -- Value-change delta. Hidden until stock differs from the last acknowledged
+    -- state; clicking it opens the breakdown and begins a new accumulation period.
     local delta = lastSnapshot.delta
     if delta and delta ~= 0 then
         local gain = delta > 0
@@ -749,18 +802,17 @@ local function RenderFooter()
     end
 end
 
--- Pick one useful next step rather than stacking advice. Price coverage comes
--- first because it affects the trustworthiness of every total; then surface a
--- concentrated bag's most valuable category; finally point at material movement
--- relative to the saved snapshot.
+-- Reserve the extra guidance row for a condition that compromises the valuation.
+-- Ordinary navigation belongs to the category rows and detail window instead.
 local function RenderGuidance(snapshot)
     local row = footerGuidanceRow
     row.action = nil
 
     local unpriced = snapshot.unpricedSlots or 0
     if unpriced > 0 then
-        row.label:SetText(Colorize(COLOR_ACCENT, stringformat(
+        row.label:SetText(Colorize(COLOR_WARN, stringformat(
             GetString(SI_BMW_FOOTER_GUIDANCE_UNPRICED), unpriced)))
+        row.arrow:SetText(Colorize(COLOR_WARN, ">"))
         row.action = function()
             local detail = addon.DetailWindow
             if detail and detail.ShowUnpriced then
@@ -768,58 +820,7 @@ local function RenderGuidance(snapshot)
             end
         end
     else
-        local categories = snapshot.categories or {}
-        local topCategory, topThreeGold = nil, 0
-        local topOne, topTwo, topThree = nil, nil, nil
-        for index = 1, #categories do
-            local category = categories[index]
-            if not topOne or category.gold > topOne.gold then
-                topThree, topTwo, topOne = topTwo, topOne, category
-            elseif not topTwo or category.gold > topTwo.gold then
-                topThree, topTwo = topTwo, category
-            elseif not topThree or category.gold > topThree.gold then
-                topThree = category
-            end
-        end
-        if topOne and topTwo and topThree then
-            topCategory = topOne
-            topThreeGold = topOne.gold + topTwo.gold + topThree.gold
-        end
-
-        local total = snapshot.gold or 0
-        if topCategory and total > 0 and topThreeGold / total >= 0.8 then
-            local percent = zo_round(topThreeGold / total * 100)
-            row.label:SetText(Colorize(COLOR_ACCENT, stringformat(
-                GetString(SI_BMW_FOOTER_GUIDANCE_TOP_CATEGORIES), percent, topCategory.name)))
-            row.action = function()
-                local detail = addon.DetailWindow
-                if detail then
-                    detail.Show(topCategory.id, topCategory.name)
-                end
-            end
-        else
-            local valuation = addon.Valuation
-            local diffGold = 0
-            if valuation and valuation.HasSnapshot and valuation.HasSnapshot()
-                and valuation.GetDiffMaterials then
-                local changes = valuation.GetDiffMaterials()
-                for index = 1, #changes do
-                    diffGold = diffGold + (changes[index].goldDelta or 0)
-                end
-            end
-            if diffGold ~= 0 then
-                local sign = diffGold > 0 and "+" or "-"
-                row.label:SetText(Colorize(COLOR_ACCENT,
-                    stringformat(GetString(SI_BMW_FOOTER_GUIDANCE_CHANGES),
-                        sign .. FormatGold(mathabs(diffGold)))))
-                row.action = function()
-                    local detail = addon.DetailWindow
-                    if detail then
-                        detail.ShowDiff()
-                    end
-                end
-            end
-        end
+        row.arrow:SetText(Colorize(COLOR_ACCENT, ">"))
     end
 
     row.container:SetHidden(row.action == nil)
@@ -968,7 +969,7 @@ function Window.Update()
     RenderGuidance(snapshot)
 
     -- Header block: prominent total + subtitle counts.
-    totalLabel:SetText(FormatGold(snapshot.gold))
+    RenderTotalText()
 
     -- Account/character identity on the title line (optional). The Craft Bag is
     -- account-wide, so the @account handle names whose bag this is; the character
@@ -992,8 +993,9 @@ function Window.Update()
         subtitleLabel:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_WINDOW_EMPTY)))
     end
 
-    local y = PADDING + TITLE_HEIGHT + TITLE_TO_TOTAL_GAP + TOTAL_HEIGHT
-        + TOTAL_TO_SUBTITLE_GAP + SUBTITLE_HEIGHT
+    local y = PADDING + ADDON_NAME_HEIGHT + VERSION_LINE_GAP + VERSION_DATE_HEIGHT
+        + VERSION_TO_TOTAL_GAP + TOTAL_HEIGHT + TOTAL_TO_PROFILE_GAP
+        + PROFILE_HEIGHT + PROFILE_TO_SUBTITLE_GAP + SUBTITLE_HEIGHT
 
     -- Divider under the header.
     y = y + HEADER_TO_DIVIDER_GAP
@@ -1020,7 +1022,8 @@ function Window.Update()
             local data = rows[i]
             local row = AcquireRow(i)
             row.data = data
-            row.leaderMarker:SetHidden(data.id ~= leaderCategoryId)
+            row.isLeader = data.id == leaderCategoryId
+            row.leaderMarker:SetHidden(not row.isLeader)
             -- Optional profession icon + name + the category's share of the grand
             -- total, so it reads "[icon] Blacksmithing 42%" at a glance. Guard
             -- against a zero total (an all-unpriced bag) so the share is simply
@@ -1059,8 +1062,10 @@ function Window.Update()
     dividerTop:SetHidden(not showBreakdown or rowCount == 0)
     if not showBreakdown or rowCount == 0 then
         -- Collapse the header divider's gap when there is no breakdown to show.
-        y = PADDING + TITLE_HEIGHT + TITLE_TO_TOTAL_GAP + TOTAL_HEIGHT
-            + TOTAL_TO_SUBTITLE_GAP + SUBTITLE_HEIGHT + HEADER_TO_DIVIDER_GAP
+        y = PADDING + ADDON_NAME_HEIGHT + VERSION_LINE_GAP + VERSION_DATE_HEIGHT
+            + VERSION_TO_TOTAL_GAP + TOTAL_HEIGHT + TOTAL_TO_PROFILE_GAP
+            + PROFILE_HEIGHT + PROFILE_TO_SUBTITLE_GAP + SUBTITLE_HEIGHT
+            + HEADER_TO_DIVIDER_GAP
     end
 
     -- Footer block: bottom divider + the info rows (two-column label -> value).
@@ -1135,13 +1140,6 @@ function Window.Update()
         sparkScaleLabel:SetHidden(true)
     end
 
-    -- Release metadata is intentionally last: it stays visible for support and
-    -- testing, but never competes with the bag value or operational summary.
-    y = y + VERSION_GAP
-    versionLabel:ClearAnchors()
-    versionLabel:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, y)
-    y = y + FOOTER_LINE
-
     windowControl:SetHeight(y + PADDING)
 end
 
@@ -1190,6 +1188,7 @@ function Window.Hide()
         windowControl:SetHidden(true)
     end
     StopFooterTick()
+    StopTotalGlow()
 end
 
 -- Re-apply the configured anchor offset after the settings panel changes it.
@@ -1228,10 +1227,13 @@ function Window.ApplyWidth()
     -- The profile label's width tracks the window so a wider panel gives the handle
     -- more room before it ellipsizes.
     if profileLabel then
-        profileLabel:SetWidth(width * 0.55)
+        profileLabel:SetWidth(innerWidth)
     end
     if subtitleLabel then
         subtitleLabel:SetWidth(innerWidth)
+    end
+    if versionNameLabel then
+        versionNameLabel:SetWidth(innerWidth)
     end
     if versionLabel then
         versionLabel:SetWidth(innerWidth)

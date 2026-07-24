@@ -15,7 +15,7 @@ local tonumber = tonumber
 --   colorScaleGold        tint gold figures by magnitude (dim -> hot) instead of flat gold
 --   sortByValue           order category rows by descending value (vs profession order)
 --   detailColumnMode      "basic" (name/qty/value) or "analytics" (adds cumulative share and price change)
---   deltaMode             "since last visit" baseline: "visit" (per open) or "session" (until reloadui/logout)
+--   deltaMode             footer-change baseline: "visit" (until manually viewed, persists) or "session" (until manually viewed or reloadui/logout)
 --   showBackground        draw the panel's dark background fill
 --   showBorder            draw the panel's border edge
 --   windowWidth           panel width in px (see Window MIN/MAX/STEP bounds)
@@ -23,8 +23,8 @@ local tonumber = tonumber
 --   detailWindowLeft/Top  saved absolute position of the material detail window
 --   withdrawWindowLeft/Top saved absolute position of the unified withdraw window
 --   showInGuildStore      show the panel while the guild store is open (shifted clear of the store UI)
---   lastVisitGold         grand total saved on last bag close, for the "since last visit" delta
---   lastVisitItems        total item count saved alongside it, to gate the delta on real stock changes
+--   lastVisitGold         grand total at the last manually acknowledged visit baseline
+--   lastVisitItems        item count at that baseline, retained for legacy-save migration
 --   priceHistory          [itemId] = compact "unit price~unix timestamp" baseline for the detail window's price-change column
 --   showValueHistory      draw the grand-total sparkline (Craft Bag value over time) in the footer
 --   showProfile           show the @account handle + character name on the panel's title line

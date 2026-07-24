@@ -634,6 +634,21 @@ function DetailWindow.Initialize()
     -- the full width up to the close button. Snapshot actions and list filters
     -- occupy their own toolbar rows below.
     titleLabel:SetDimensions(WINDOW_WIDTH - PADDING * 2 - 32 - 8, TITLE_HEIGHT)
+    titleLabel:SetMouseEnabled(true)
+    titleLabel:SetHandler("OnMouseEnter", function(self)
+        if viewMode ~= "diff" or diffSource ~= "visit" then
+            return
+        end
+        InitializeTooltip(InformationTooltip, self, BOTTOMLEFT, 0, 4, TOPLEFT)
+        InformationTooltip:AddLine(GetString(SI_BMW_DETAIL_VISIT_DIFF_TOOLTIP_TITLE),
+            "ZoFontHeader2", ZO_NORMAL_TEXT:UnpackRGB())
+        ZO_Tooltip_AddDivider(InformationTooltip)
+        InformationTooltip:AddLine(GetString(SI_BMW_DETAIL_VISIT_DIFF_TOOLTIP_BODY),
+            "ZoFontGame", 0.86, 0.85, 0.78)
+    end)
+    titleLabel:SetHandler("OnMouseExit", function()
+        ClearTooltip(InformationTooltip)
+    end)
 
     -- A persistent, muted scope line makes the active representation explicit:
     -- category vs whole-bag search vs snapshot comparison. The title stays short

@@ -44,10 +44,10 @@ local strings = {
     SI_BMW_SETTING_DETAIL_COLUMNS_TOOLTIP = "Basic shows material, quantity, and value for quicker scanning. Analytics also shows cumulative value share and price change. The Changes view always keeps its delta, share, and status columns.",
     SI_BMW_SETTING_DETAIL_COLUMNS_BASIC = "Basic",
     SI_BMW_SETTING_DETAIL_COLUMNS_ANALYTICS = "Analytics",
-    SI_BMW_SETTING_DELTA_MODE_NAME = "\"Since last visit\" baseline",
-    SI_BMW_SETTING_DELTA_MODE_TOOLTIP = "What the footer's value-change line compares against. \"Each visit\": the previous time you opened the Craft Bag (persists across restarts). \"Each session\": the first time you opened it after logging in or reloading the UI, so the change accumulates until you log out or /reloadui. A pure price change with the same stock shows no delta. When stock changed, the total also includes any price revaluation; hover or click the row to see the split.",
-    SI_BMW_SETTING_DELTA_MODE_VISIT = "Each visit",
-    SI_BMW_SETTING_DELTA_MODE_SESSION = "Each session",
+    SI_BMW_SETTING_DELTA_MODE_NAME = "Stock-change baseline",
+    SI_BMW_SETTING_DELTA_MODE_TOOLTIP = "What the footer's change line compares against. \"Since last review\": the state when you last clicked the change line; new changes accumulate across Craft Bag opens and persist across restarts. \"This session\": works the same way, but resets on logout or /reloadui. A pure price change with the same stock shows no delta. Click the row to inspect the breakdown and mark it reviewed.",
+    SI_BMW_SETTING_DELTA_MODE_VISIT = "Since last review",
+    SI_BMW_SETTING_DELTA_MODE_SESSION = "This session",
     SI_BMW_SETTING_BACKGROUND_NAME = "Show background",
     SI_BMW_SETTING_BACKGROUND_TOOLTIP = "Draw the dark panel background behind the text. Turn off for plain floating text over the Craft Bag.",
     SI_BMW_SETTING_BORDER_NAME = "Show border",
@@ -76,7 +76,6 @@ local strings = {
     SI_BMW_SETTING_REFRESH_TOOLTIP = "Clear the cached prices and recompute the Craft Bag value. Useful after Master Merchant or Tamriel Trade Centre finishes importing fresh data.",
 
     -- Window
-    SI_BMW_WINDOW_TITLE = "Craft Bag Worth",
     -- Account/character label on the title line. %s = @account handle, %s =
     -- character name. The Craft Bag is account-wide, so the handle leads.
     SI_BMW_PROFILE_ACCOUNT_CHAR = "%s · %s",
@@ -84,7 +83,8 @@ local strings = {
     -- %s = total item count.
     SI_BMW_WINDOW_SUBTITLE = "%d slots · %s stacks · %s items",
     SI_BMW_WINDOW_EMPTY = "Craft Bag is empty",
-    SI_BMW_WINDOW_VERSION_DATE = "Addon version 3.5.231844 dated July 23, 2026",
+    SI_BMW_WINDOW_ADDON_NAME = "Bureau Of Material Worth",
+    SI_BMW_WINDOW_VERSION_DATE = "Addon version 3.6.163246 dated July 24, 2026",
     -- Category row: the category's share of the grand total. %d = percent.
     SI_BMW_ROW_PERCENT = "%d%%",
 
@@ -96,6 +96,7 @@ local strings = {
     SI_BMW_TOOLTIP_STACKS = "Stacks of 200: %s",
     SI_BMW_TOOLTIP_ITEMS = "Items: %s",
     SI_BMW_TOOLTIP_UNPRICED = "Without price: %d slots",
+    SI_BMW_TOOLTIP_TOP_CATEGORY = "Most valuable category",
     SI_BMW_TOOLTIP_CLICK_HINT = "Click for the full material list",
 
     -- Detail window: per-category material table (opened by clicking a row)
@@ -198,8 +199,10 @@ local strings = {
     -- Diff title; %s = relative time of the snapshot (e.g. "5m ago").
     SI_BMW_DETAIL_DIFF_TITLE = "Changes since %s",
     SI_BMW_DETAIL_DIFF_EMPTY = "Nothing changed since the snapshot.",
-    SI_BMW_DETAIL_VISIT_DIFF_TITLE = "Changes since last visit",
-    SI_BMW_DETAIL_VISIT_DIFF_EMPTY = "No material quantities changed since the last visit.",
+    SI_BMW_DETAIL_VISIT_DIFF_TITLE = "Changes since last review",
+    SI_BMW_DETAIL_VISIT_DIFF_EMPTY = "No material quantities changed since the last review.",
+    SI_BMW_DETAIL_VISIT_DIFF_TOOLTIP_TITLE = "How this list works",
+    SI_BMW_DETAIL_VISIT_DIFF_TOOLTIP_BODY = "This list contains stock changes since the last review. Clicking the row in the main window already marked them reviewed: new changes accumulate separately, even when the Craft Bag is closed and opened again.",
     SI_BMW_DETAIL_NO_SNAPSHOT = "No snapshot yet. Press Remember.",
     -- Diff column headers. ASCII "+/-" rather than a Unicode delta glyph, which
     -- the UI font will not render (same reason the addon uses arrow textures).
@@ -260,13 +263,14 @@ local strings = {
     SI_BMW_FOOTER_COVERAGE_VALUE = "%d/%d priced",
     SI_BMW_FOOTER_LOW_COVERAGE = "%d/%d unpriced!",
     SI_BMW_FOOTER_COVERAGE_UNPRICED_HINT = "Click to view materials without a price.",
-    SI_BMW_FOOTER_DELTA_LABEL = "This visit",
+    SI_BMW_FOOTER_DELTA_LABEL = "Since review",
     SI_BMW_FOOTER_DELTA_LABEL_SESSION = "This session",
     SI_BMW_FOOTER_DELTA_VALUE = "%s",
     SI_BMW_FOOTER_DELTA_TOOLTIP_TITLE = "Value change breakdown",
     SI_BMW_FOOTER_DELTA_TOOLTIP_STOCK = "Stock movement: %s",
     SI_BMW_FOOTER_DELTA_TOOLTIP_PRICES = "Price revaluation: %s",
-    SI_BMW_FOOTER_DELTA_TOOLTIP_CLICK = "Click to inspect materials that changed quantity.",
+    SI_BMW_FOOTER_DELTA_TOOLTIP_ACCUMULATION = "Changes accumulate until manually reviewed and do not reset when the Craft Bag opens.",
+    SI_BMW_FOOTER_DELTA_TOOLTIP_CLICK = "Click to inspect the changes and mark them reviewed.",
     SI_BMW_FOOTER_GUIDANCE_UNPRICED = "%d materials without a price - view list",
     SI_BMW_FOOTER_GUIDANCE_TOP_CATEGORIES = "Top 3 categories hold %d%% - open %s",
     SI_BMW_FOOTER_GUIDANCE_CHANGES = "Since snapshot: %s - view changes",
@@ -347,7 +351,7 @@ local strings = {
     SI_BMW_MSG_STATUS_FULL_UPDATES = "Full inventory updates this session: %d total, %d while open, %d coalesced rescans.",
     -- First-open-of-session announcement. _DELTA: %s current total, %s signed
     -- change (both already include the gold icon). _TOTAL: %s current total.
-    SI_BMW_MSG_VISIT_DELTA = "Craft Bag is worth %s (%s since last visit).",
+    SI_BMW_MSG_VISIT_DELTA = "Craft Bag is worth %s (%s since last review).",
     SI_BMW_MSG_VISIT_TOTAL = "Craft Bag is worth %s.",
     SI_BMW_MSG_SIGNIFICANT_DELTA = "Craft Bag value changed by %s (%d%%).",
     SI_BMW_MSG_PRICES_RECOVERED = "Prices are now available for all Craft Bag materials (%d updated).",

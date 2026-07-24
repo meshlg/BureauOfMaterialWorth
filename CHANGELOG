@@ -3,6 +3,18 @@
 
 
 
+[color=#6FCB9F]Version: 3.6.163246[/color]
+
+- Added a hover explanation for the green marker on the most valuable category.
+- Reworked the footer change summary: material changes now accumulate from the last manual review instead of resetting whenever the Craft Bag is opened.
+- Clicking the change summary now opens its material breakdown and marks that batch as reviewed; later changes begin accumulating as a new batch.
+- Added clear Russian and English labels, settings descriptions, and hover help explaining the manual-review behavior in both the main panel and the change-detail window.
+- Simplified the footer guidance row: it now appears only when the valuation has materials without market prices, avoiding duplicate or competing change summaries.
+- Added a subtle hover pulse directly to the grand-total text and gold icon, while retaining the net-sale tooltip.
+- Redesigned the footer release block into separate addon-name and version lines, with a muted accent name, muted version text, and stable spacing.
+
+
+
 [color=#6FCB9F]Version: 3.5.231844[/color]
 
 - Excluded Chameleon Crown Gems from valuation, snapshots, and unpriced-material warnings because they cannot be sold.

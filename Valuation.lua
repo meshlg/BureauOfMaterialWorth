@@ -432,18 +432,19 @@ local EXCLUDED_FROM_VALUATION = {
     [71668] = true, -- Chameleon Crown Gem: cannot be sold
 }
 
--- "Since last visit" delta shown in the footer, recomputed once per bag open.
+-- Footer delta recomputed once per bag open against the last acknowledged state.
+-- Opening the Craft Bag never consumes it: material changes are acknowledged
+-- only when the user opens the footer breakdown.
 -- Two baselines feed it depending on the user's deltaMode setting:
---   "visit"   -- compare against the previous bag open; baseline persists in
---                savedVars (lastVisitGold/Items) so it survives a restart.
---   "session" -- compare against the first open after UI load; baseline lives in
---                the memory upvalues below and resets on /reloadui or logout.
+--   "visit"   -- baseline persists in savedVars so it survives a restart.
+--   "session" -- baseline lives in memory and resets on /reloadui or logout.
 -- In both modes the gold delta is gated on the item count changing, so a pure
 -- price drift (restart + price reimport, same stock) reports no delta.
 local deltaSinceLastVisit = nil
-local sessionBaseGold = nil   -- session-mode baseline: gold at first open this session
-local sessionBaseline = nil   -- full composition of the first session visit, for its delta breakdown
-local visitNotified = false   -- emitted the "since last visit" chat line yet this session?
+local sessionBaseGold = nil   -- session-mode acknowledged baseline gold
+local sessionBaseline = nil   -- session-mode acknowledged material baseline
+local acknowledgedVisitDetails = nil -- retained while the acknowledged detail view is open
+local visitNotified = false   -- emitted the first-session chat line yet this session?
 local visitFinalizePending = false  -- an open is waiting to finalize its delta/history once prices settle
 -- Forward-declared: StartPriceRetry (defined above FinalizeVisit) calls it from
 -- its timer callback once the last unpriced slot heals or the budget is spent.
@@ -1019,8 +1020,8 @@ function Valuation.Initialize()
     EVENT_MANAGER:RegisterForEvent(addon.name, EVENT_INVENTORY_FULL_UPDATE, OnFullInventoryUpdate)
 end
 
--- Finalize the "since last visit" delta, advance the persisted baseline, emit the
--- once-per-session chat line, and record the value-history point. When
+-- Finalize the accumulated footer delta, emit the once-per-session chat line,
+-- and record the value-history point. When
 -- `pricesReadyForSnapshot` is true, also create the one-time automatic snapshot.
 -- Split out of
 -- OnCraftBagShown because all of these consume the just-computed grandGold: if the
@@ -1051,16 +1052,15 @@ function FinalizeVisit(pricesReadyForSnapshot)
         Valuation.CaptureSnapshot()
     end
 
-    -- "Since last visit" delta, computed once per open so incremental updates
-    -- during the visit don't move it under the user. The baseline depends on the
-    -- configured mode; in both, the gold delta is gated on an actual material
-    -- quantity change so a pure price drift (restart + reimport, same stock)
-    -- shows nothing rather than a misleading "+2M".
+    -- Compute the delta once per open so incremental updates during the visit do
+    -- not move it under the user. The baseline is retained until the user clicks
+    -- the footer row, so changes accumulate across bag opens. A pure price drift
+    -- with unchanged stock remains hidden rather than reading as a material change.
     local mode = (sv and sv.deltaMode) or "visit"
 
     if mode == "session" then
-        -- Compare against the first open of this session; baseline lives in
-        -- memory and resets on reloadui/logout. Establish it on first open.
+        -- Establish the session baseline quietly on first open, then retain it
+        -- until manual inspection acknowledges the accumulated changes.
         comparisonGold = sessionBaseGold
         if sessionBaseGold ~= nil and sessionBaseline then
             visitDetails = BuildVisitDeltaDetails(sessionBaseline)
@@ -1077,8 +1077,8 @@ function FinalizeVisit(pricesReadyForSnapshot)
             sessionBaseline = CaptureVisitBaseline()
         end
     elseif sv then
-        -- Visit mode: compare against the previous open, then advance the
-        -- persisted baseline so the next visit measures from here.
+        -- Visit mode persists its baseline across restarts. The first open only
+        -- establishes it; later opens compare against it until manual review.
         local previousGold = sv.lastVisitGold
         comparisonGold = previousGold
         local previousItems = sv.lastVisitItems
@@ -1098,17 +1098,18 @@ function FinalizeVisit(pricesReadyForSnapshot)
         else
             deltaSinceLastVisit = nil
         end
-        sv.lastVisitGold = grandGold
-        sv.lastVisitItems = grandItems
-        sv.lastVisitBaseline = CompressVisitBaseline(currentBaseline or CaptureVisitBaseline())
+        if previousGold == nil or not previousBaseline or not previousBaseline.materials then
+            sv.lastVisitGold = grandGold
+            sv.lastVisitItems = grandItems
+            sv.lastVisitBaseline = CompressVisitBaseline(currentBaseline or CaptureVisitBaseline())
+        end
     else
         deltaSinceLastVisit = nil
     end
 
     if sv then
-        -- A legacy baseline contains totals only, so it can still yield the
-        -- familiar aggregate delta but not a material/price split until this
-        -- version has captured one full visit baseline.
+        -- Keep the unacknowledged breakdown across restarts so merely opening the
+        -- Craft Bag never loses a change awaiting manual review.
         sv.lastVisitDetails = CompressVisitDetails(visitDetails)
     end
 
@@ -1139,6 +1140,32 @@ function FinalizeVisit(pricesReadyForSnapshot)
     -- Refresh so the footer picks up the just-computed delta (the delta was nil
     -- while finalize was deferred; without this the footer would show no change
     -- until the next window refresh).
+    RefreshWindow()
+end
+
+-- The footer row is an acknowledgement control. Preserve the details in memory
+-- for the just-opened table, then advance the baseline so future changes form a
+-- new accumulated delta. The persisted record is cleared immediately, making the
+-- footer row disappear even while DetailWindow remains open.
+function Valuation.AcknowledgeVisitDelta()
+    local sv = private.savedVars
+    if not sv or not deltaSinceLastVisit or deltaSinceLastVisit == 0 then
+        return
+    end
+
+    acknowledgedVisitDetails = sv.lastVisitDetails
+    local baseline = CaptureVisitBaseline()
+    if (sv.deltaMode or "visit") == "session" then
+        sessionBaseGold = baseline.gold
+        sessionBaseline = baseline
+    else
+        sv.lastVisitGold = baseline.gold
+        sv.lastVisitItems = baseline.items
+        sv.lastVisitBaseline = CompressVisitBaseline(baseline)
+    end
+
+    sv.lastVisitDetails = nil
+    deltaSinceLastVisit = nil
     RefreshWindow()
 end
 
@@ -1218,7 +1245,7 @@ end
 -- call and reads a stable view:
 --   {
 --     gold, slots, stacks, items, unpricedSlots,  -- bag-wide rollup
---     delta,                                       -- gold change since last visit (or nil)
+--     delta,                                       -- gold change since last review (or nil)
 --     sourceName, sourceHasOthers,                 -- dominant price source for the footer
 --     lastInventoryUpdateMs, lastPriceRefreshMs,    -- valuation and price freshness
 --     categories = { { id, name, gold, slots, stacks, items, unpricedSlots }, ... }
@@ -1789,11 +1816,12 @@ function Valuation.GetDiffMaterials()
     return rows
 end
 
--- The most recent visit/session delta is retained as a single diagnostic record.
--- It is not a second history: the next finalized comparison replaces it.
+-- The current unacknowledged delta is persisted. After the footer row is clicked,
+-- retain that same record in memory for the open detail view while a new delta
+-- starts accumulating from the acknowledged baseline.
 function Valuation.GetLastVisitDeltaDetails()
     local sv = private.savedVars
-    return sv and sv.lastVisitDetails or nil
+    return (sv and sv.lastVisitDetails) or acknowledgedVisitDetails
 end
 
 -- Quantity-only rows for the latest visit delta. The total delta's separate
