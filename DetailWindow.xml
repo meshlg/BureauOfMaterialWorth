@@ -10,6 +10,16 @@
             title, headers and divider are still built in code (DetailWindow.lua)
             to match the rest of the addon.
 
+            This file declares GEOMETRY ONLY: no fonts, no colours. Both are
+            part of the shared visual language in UI.lua, and a `font=` attribute
+            here would be a second place the type scale is decided from that no
+            reader of that module would think to check. The row columns are faced
+            by UI.ApplyRowFonts (FONT.body) from the list's setup function, and
+            the hover backdrop is tinted by UI.PaintRowFill. Add a column here
+            with its dimensions and anchors, then name it in the column list the
+            setup function passes to UI.ApplyRowFonts.
+
+
             Column layout (left -> right), mirrored by the header labels built in
             code so they line up:
               Icon   28px  fixed, left
@@ -47,27 +57,27 @@
                     <Anchor point="RIGHT" relativeTo="$(parent)Withdraw" relativePoint="LEFT" offsetX="-4" />
                 </Button>
 
-                <Label name="$(parent)Change" font="ZoFontGame" horizontalAlignment="RIGHT" verticalAlignment="CENTER">
+                <Label name="$(parent)Change" horizontalAlignment="RIGHT" verticalAlignment="CENTER">
                     <Dimensions x="90" />
                     <Anchor point="RIGHT" relativeTo="$(parent)Queue" relativePoint="LEFT" offsetX="-6" />
                 </Label>
 
-                <Label name="$(parent)Cum" font="ZoFontGame" horizontalAlignment="RIGHT" verticalAlignment="CENTER">
+                <Label name="$(parent)Cum" horizontalAlignment="RIGHT" verticalAlignment="CENTER">
                     <Dimensions x="70" />
                     <Anchor point="RIGHT" relativeTo="$(parent)Change" relativePoint="LEFT" offsetX="-6" />
                 </Label>
 
-                <Label name="$(parent)Value" font="ZoFontGame" horizontalAlignment="RIGHT" verticalAlignment="CENTER">
+                <Label name="$(parent)Value" horizontalAlignment="RIGHT" verticalAlignment="CENTER">
                     <Dimensions x="150" />
                     <Anchor point="RIGHT" relativeTo="$(parent)Cum" relativePoint="LEFT" offsetX="-6" />
                 </Label>
 
-                <Label name="$(parent)Qty" font="ZoFontGame" horizontalAlignment="RIGHT" verticalAlignment="CENTER">
+                <Label name="$(parent)Qty" horizontalAlignment="RIGHT" verticalAlignment="CENTER">
                     <Dimensions x="70" />
                     <Anchor point="RIGHT" relativeTo="$(parent)Value" relativePoint="LEFT" offsetX="-6" />
                 </Label>
 
-                <Label name="$(parent)Name" font="ZoFontGame" horizontalAlignment="LEFT" verticalAlignment="CENTER">
+                <Label name="$(parent)Name" horizontalAlignment="LEFT" verticalAlignment="CENTER">
                     <Anchor point="LEFT" relativeTo="$(parent)Icon" relativePoint="RIGHT" offsetX="6" />
                     <Anchor point="RIGHT" relativeTo="$(parent)Qty" relativePoint="LEFT" offsetX="-6" />
                 </Label>
@@ -78,8 +88,8 @@
             Withdraw-queue list + row template (Part B). Same recycled-row
             pattern as the detail list above, but the row is interactive: the Qty
             column is an editable numeric box and there is a Remove button. The
-            row's font/size differ slightly (taller, 28px) so the editbox and
-            button have room. Column layout (left -> right):
+            row is taller (28px) so the editbox and button have room; its text is
+            faced from Lua like the detail row's. Column layout (left -> right):
               Icon    24px  fixed, left
               Name    flexible (Icon -> Qty)
               Qty     64px  editable numeric, anchored left of Value
@@ -100,7 +110,7 @@
                     <Anchor point="RIGHT" relativeTo="$(parent)" relativePoint="RIGHT" offsetX="-4" />
                 </Button>
 
-                <Label name="$(parent)Value" font="ZoFontGame" horizontalAlignment="RIGHT" verticalAlignment="CENTER">
+                <Label name="$(parent)Value" horizontalAlignment="RIGHT" verticalAlignment="CENTER">
                     <Dimensions x="120" />
                     <Anchor point="RIGHT" relativeTo="$(parent)Remove" relativePoint="LEFT" offsetX="-8" />
                 </Label>
@@ -116,7 +126,7 @@
                     </Controls>
                 </Backdrop>
 
-                <Label name="$(parent)Name" font="ZoFontGame" horizontalAlignment="LEFT" verticalAlignment="CENTER">
+                <Label name="$(parent)Name" horizontalAlignment="LEFT" verticalAlignment="CENTER">
                     <Anchor point="LEFT" relativeTo="$(parent)Icon" relativePoint="RIGHT" offsetX="6" />
                     <Anchor point="RIGHT" relativeTo="$(parent)QtyBg" relativePoint="LEFT" offsetX="-6" />
                 </Label>

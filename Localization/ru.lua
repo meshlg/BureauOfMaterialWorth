@@ -53,7 +53,7 @@ local strings = {
     [SI_BMW_SETTING_DELTA_MODE_VISIT] = "С прошлого просмотра",
     [SI_BMW_SETTING_DELTA_MODE_SESSION] = "За сессию",
     [SI_BMW_SETTING_BACKGROUND_NAME] = "Показывать фон",
-    [SI_BMW_SETTING_BACKGROUND_TOOLTIP] = "Рисовать тёмный фон панели за текстом. Выключите для простого текста поверх ремесленной сумки.",
+    [SI_BMW_SETTING_BACKGROUND_TOOLTIP] = "Рисовать тёмный фон панели за текстом. Выключите для ������ростого текста поверх ремесленной сумки.",
     [SI_BMW_SETTING_BORDER_NAME] = "Показывать рамку",
     [SI_BMW_SETTING_BORDER_TOOLTIP] = "Рисовать рамку панели. Выключите для более чистого вида без рамки.",
     [SI_BMW_SETTING_VALUE_HISTORY_NAME] = "Показывать историю стоимости",
@@ -86,7 +86,10 @@ local strings = {
     [SI_BMW_WINDOW_SUBTITLE] = "%d ячеек · %s стаков · %s предметов",
     [SI_BMW_WINDOW_EMPTY] = "Ремесленная сумка пуста",
     [SI_BMW_WINDOW_ADDON_NAME] = "Bureau Of Material Worth",
-    [SI_BMW_WINDOW_VERSION_DATE] = "Версия аддона 3.6.163246 от 24.07.2026",
+    -- %s = версия из BureauOfMaterialWorth.version, %s = дата релиза из
+    -- BureauOfMaterialWorth.releaseDate. Подставляются в рантайме, поэтому
+    -- при выпуске версию правим только в ядре и манифесте.
+    [SI_BMW_WINDOW_VERSION_DATE] = "Версия аддона %s от %s",
     [SI_BMW_ROW_PERCENT] = "%d%%",
 
     -- Window: per-category hover tooltip
@@ -105,7 +108,9 @@ local strings = {
     [SI_BMW_DETAIL_COL_NAME] = "Материал",
     [SI_BMW_DETAIL_COL_QTY] = "Кол-во",
     [SI_BMW_DETAIL_COL_VALUE] = "Стоимость",
-    [SI_BMW_DETAIL_COL_CUM] = "Накоп. 80%",
+    -- %d = порог CUM_CORE_THRESHOLD из DetailWindow.lua; подставляется в рантайме,
+    -- поэтому заголовок не может разойтись с фактическим порогом в коде.
+    [SI_BMW_DETAIL_COL_CUM] = "Накоп. %d%%",
     [SI_BMW_DETAIL_CUM] = "%d%%",
     [SI_BMW_DETAIL_CUM_TOOLTIP_TITLE] = "Накопленная доля",
     [SI_BMW_DETAIL_CUM_TOOLTIP_BODY] = "Доля каждого материала в общей стоимости списка, рассчитанная от самого дорогого к самому дешёвому. Она не меняется при сортировке таблицы. Смотрите её в режиме |cFFF897по стоимости|r: строки примерно до 80% содержат те немногие стаки, которые дают основную часть стоимости. Их стоит продать в первую очередь; остальное можно оставить. Отметка 100% всегда приходится на самый дешёвый материал. Материалы без цены не учитываются и отмечаются прочерком.",
@@ -218,14 +223,15 @@ local strings = {
     [SI_BMW_WITHDRAW_HIDE] = "Скрыть",
     [SI_BMW_WITHDRAW_BACKPACK_FULL] = "Сумка переполнена",
     [SI_BMW_WITHDRAW_PROGRESS] = "Извлечение... %d / %d",
-    [SI_BMW_WITHDRAW_RESULT] = "Извлечено: %d / %d",
-    [SI_BMW_WITHDRAW_HINT] = "Используйте кнопки строки, чтобы извлечь материал или добавить его в очередь",
+    -- Метка результата в самом окне. Суффикс _LABEL отделяет её от чат-отчёта
+    -- SI_BMW_MSG_WITHDRAW_RESULT, который принимает три %s вместо двух %d.
+    [SI_BMW_WITHDRAW_RESULT_LABEL] = "Извлечено: %d / %d",
+
 
     -- Очередь извлечения внутри окна извлечения
     [SI_BMW_QUEUE_TITLE] = "Очередь извлечения",
     [SI_BMW_QUEUE_EMPTY] = "Нажмите «В очередь» или + у материала, чтобы собрать пакет.",
-    [SI_BMW_QUEUE_SLOTS] = "Нужно ячеек: %d / свободно %d",
-    [SI_BMW_QUEUE_TOTAL] = "Стоимость очереди: %s",
+    -- Итоговая строка очереди. %d = материалов, %d = требуемых ячеек, %s = стоимость.
     [SI_BMW_QUEUE_SUMMARY] = "%d материалов · %d ячеек · %s",
     [SI_BMW_QUEUE_STATUS_READY] = "Готово к извлечению",
     [SI_BMW_QUEUE_STATUS_NO_SPACE] = "Недостаточно места в сумке",
@@ -248,8 +254,6 @@ local strings = {
     [SI_BMW_FOOTER_DELTA_TOOLTIP_ACCUMULATION] = "Изменения накапливаются до ручного просмотра и не сбрасываются от открытия сумки.",
     [SI_BMW_FOOTER_DELTA_TOOLTIP_CLICK] = "Нажмите, чтобы увидеть изменения и отметить их просмотренными.",
     [SI_BMW_FOOTER_GUIDANCE_UNPRICED] = "Без цены: %d - открыть список",
-    [SI_BMW_FOOTER_GUIDANCE_TOP_CATEGORIES] = "Топ-3 категорий: %d%% стоимости - открыть «%s»",
-    [SI_BMW_FOOTER_GUIDANCE_CHANGES] = "С момента снимка: %s - открыть изменения",
 
     -- Тултип общего тотала: расклад «чистыми при продаже» по комиссиям
     -- гильдейского магазина. %% даёт литеральный процент через string.format,
@@ -313,8 +317,8 @@ local strings = {
     [SI_BMW_LOG_ADDON_LOADED] = "Аддон загружен.",
     [SI_BMW_LOG_CRAFTBAG_SHOWN] = "Ремесленная сумка открыта.",
     [SI_BMW_LOG_CRAFTBAG_HIDDEN] = "Ремесленная сумка закрыта.",
-    [SI_BMW_LOG_RESCAN_DONE] = "Полный пересчёт завершён: %d ячеек, всего %s.",
-    [SI_BMW_LOG_SLOT_UPDATED] = "Ячейка %d обновлена (вклад %s).",
+    [SI_BMW_LOG_RESCAN_DONE] = "Полный пересчёт завершён: %d ячеек, в��его %s.",
+    [SI_BMW_LOG_SLOT_UPDATED] = "Я��ейка %d обновлена (вклад %s).",
     [SI_BMW_LOG_LAM_MISSING] = "LibAddonMenu-2.0 не найден; панель настроек недоступна.",
 
     -- Chat messages

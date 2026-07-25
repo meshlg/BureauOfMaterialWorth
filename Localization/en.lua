@@ -84,7 +84,14 @@ local strings = {
     SI_BMW_WINDOW_SUBTITLE = "%d slots · %s stacks · %s items",
     SI_BMW_WINDOW_EMPTY = "Craft Bag is empty",
     SI_BMW_WINDOW_ADDON_NAME = "Bureau Of Material Worth",
-    SI_BMW_WINDOW_VERSION_DATE = "Addon version 3.6.163246 dated July 24, 2026",
+    -- Footer version line. %s = BureauOfMaterialWorth.version, %s =
+    -- BureauOfMaterialWorth.releaseDate, both formatted at render time. The
+    -- number and date used to be baked into this sentence in every localization,
+    -- which meant a release had to edit them in three places and they silently
+    -- drifted apart; the text now carries only the wording. The date is shown in
+    -- the canonical DD.MM.YYYY form the core stores rather than being re-spelled
+    -- per language, so there is exactly one date in the addon.
+    SI_BMW_WINDOW_VERSION_DATE = "Addon version %s (%s)",
     -- Category row: the category's share of the grand total. %d = percent.
     SI_BMW_ROW_PERCENT = "%d%%",
 
@@ -107,7 +114,10 @@ local strings = {
     -- Cumulative-share column: running % of the list's total value, read top-down
     -- (the "what to sell" Pareto cue). Header kept short for the 70px column; the
     -- hover tooltip on the header spells the meaning out in full.
-    SI_BMW_DETAIL_COL_CUM = "Cum. 80%",
+    -- %d = DetailWindow's CUM_CORE_THRESHOLD, the Pareto cut this column colors
+    -- up to. Formatted at render time so the header can never quote a threshold
+    -- the code no longer uses.
+    SI_BMW_DETAIL_COL_CUM = "Cum. %d%%",
     SI_BMW_DETAIL_CUM = "%d%%",
     SI_BMW_DETAIL_CUM_TOOLTIP_TITLE = "Cumulative share",
     SI_BMW_DETAIL_CUM_TOOLTIP_BODY = "Each material's share of this list's total value, added up from the most valuable downward - so it stays the same no matter how you sort the table. Read it on the default |cFFF897by value|r view: the rows down to roughly 80% are the few stacks that hold most of the worth, so sell those first and skip the long tail. The trailing 100% always lands on the cheapest material. Unpriced materials are left out and show a dash.",
@@ -240,16 +250,15 @@ local strings = {
     SI_BMW_WITHDRAW_BACKPACK_FULL = "Backpack is full",
     -- Live progress while a multi-stack withdrawal runs. %d / %d = moved / total.
     SI_BMW_WITHDRAW_PROGRESS = "Withdrawing... %d / %d",
-    SI_BMW_WITHDRAW_RESULT = "Withdrawn: %d / %d",
-    -- Hint shown when hovering a detail row: how the two mouse buttons act.
-    SI_BMW_WITHDRAW_HINT = "Use the row actions to withdraw or queue this material",
+    -- In-dialog result label. Named _LABEL to keep it distinct from the chat
+    -- report SI_BMW_MSG_WITHDRAW_RESULT, which takes three %s arguments instead
+    -- of two %d; the two were previously one keystroke apart.
+    SI_BMW_WITHDRAW_RESULT_LABEL = "Withdrawn: %d / %d",
 
     -- Withdraw queue: the multi-material list embedded in the withdraw window.
     SI_BMW_QUEUE_TITLE = "Withdraw queue",
     SI_BMW_QUEUE_EMPTY = "Use Add to queue or + on a material to build a batch.",
-    -- Footer summary. %d = slots the queue needs, %d = free backpack slots.
-    SI_BMW_QUEUE_SLOTS = "Needs %d slots / %d free",
-    SI_BMW_QUEUE_TOTAL = "Queue value: %s",
+    -- Footer summary. %d = materials, %d = slots the queue needs, %s = value.
     SI_BMW_QUEUE_SUMMARY = "%d materials · %d slots · %s",
     SI_BMW_QUEUE_STATUS_READY = "Ready to withdraw",
     SI_BMW_QUEUE_STATUS_NO_SPACE = "Not enough backpack space",
@@ -272,8 +281,6 @@ local strings = {
     SI_BMW_FOOTER_DELTA_TOOLTIP_ACCUMULATION = "Changes accumulate until manually reviewed and do not reset when the Craft Bag opens.",
     SI_BMW_FOOTER_DELTA_TOOLTIP_CLICK = "Click to inspect the changes and mark them reviewed.",
     SI_BMW_FOOTER_GUIDANCE_UNPRICED = "%d materials without a price - view list",
-    SI_BMW_FOOTER_GUIDANCE_TOP_CATEGORIES = "Top 3 categories hold %d%% - open %s",
-    SI_BMW_FOOTER_GUIDANCE_CHANGES = "Since snapshot: %s - view changes",
 
     -- Grand-total hover: "net if sold" breakdown of the guild-store selling fees.
     -- The %% renders a literal percent through string.format. %s = a gold amount.

@@ -19,12 +19,19 @@ local COLOR_WARN   = private.COLOR_WARN
 local COLOR_GAIN   = private.COLOR_GAIN
 local COLOR_LOSS   = private.COLOR_LOSS
 
--- COLOR_MUTED (8C8A82) as normalized RGB, for the column headers. They are sort
--- toggles whose tone is set via SetColor rather than an inline |c code, so the
--- hover handlers can brighten one to white without fighting an embedded color.
-local HEADER_MUTED_R = 0.549
-local HEADER_MUTED_G = 0.541
-local HEADER_MUTED_B = 0.510
+-- Shared visual language (UI.lua). Every font, control tint, divider weight and
+-- tooltip line in this file comes from here, so the material table cannot drift
+-- away from the summary panel and the withdraw window the way it had.
+local UI = private.UI
+local FONT = UI.FONT
+local METRIC = UI.METRIC
+
+-- The column headers are sort toggles, so their tone is set with SetColor rather
+-- than an inline |c code (the hover handler brightens one to white, which an
+-- embedded colour would fight). Derived from the palette's muted tone instead of
+-- being written out as a triple, so header text and every other secondary label
+-- are provably the same grey.
+local HEADER_MUTED_R, HEADER_MUTED_G, HEADER_MUTED_B = UI.Tone("muted")
 
 -- Cumulative-share column coloring. The figure marks the Pareto "knee": rows up
 -- to CUM_CORE_THRESHOLD make up the bulk of the value (the stacks worth hauling),
@@ -66,6 +73,14 @@ local function CumulativeColor(percent)
     return RGBToHex(r, g, b)
 end
 
+-- The cumulative column's header text ("Cum. 80%"), with the threshold filled in
+-- from CUM_CORE_THRESHOLD rather than hardcoded in the localized string. Both
+-- places that set the header label call this, so changing the constant above
+-- changes the header in every language at once.
+local function CumulativeHeaderText()
+    return stringformat(GetString(SI_BMW_DETAIL_COL_CUM), CUM_CORE_THRESHOLD)
+end
+
 local GOLD_ICON = private.GOLD_ICON
 local FEE_LISTING_RATE = private.FEE_LISTING_RATE
 local FEE_SALES_RATE = private.FEE_SALES_RATE
@@ -77,7 +92,10 @@ local ARROW_DOWN = "|t16:16:EsoUI/Art/Miscellaneous/list_sortDown.dds|t"
 -- Layout
 -- ---------------------------------------------------------------------------
 local WINDOW_WIDTH = 800   -- widened from 720 for the cumulative-share column
-local PADDING      = 12
+-- A free-floating window, so it takes the wider step of the shared spacing scale
+-- (the narrow summary panel takes METRIC.PADDING). Every inset below is derived
+-- from this, so the whole frame re-flows from the one token.
+local PADDING      = METRIC.PADDING_WIDE
 local TITLE_HEIGHT = 26
 local CONTEXT_HEIGHT = 18
 local HEADER_HEIGHT = 20
@@ -86,10 +104,16 @@ local DIVIDER_GAP  = 10
 local ROW_HEIGHT   = 26
 local LIST_MAX_ROWS = 16   -- beyond this the list scrolls instead of growing
 local FOOTER_HEIGHT = 18   -- summary line beneath the list (divider + this label)
-local BG_ALPHA     = 0.92
+
 
 -- Single row data type id for the scroll list (we only have one kind of row).
 local ROW_TYPE_ID = 1
+
+-- The row template's text columns, by name suffix (see DetailWindow.xml). The
+-- markup declares their geometry only; this list is what SetupRow hands to
+-- UI.ApplyRowFonts so all five carry the shared body face. Adding a column means
+-- adding it in both places.
+local ROW_COLUMNS = { "Name", "Qty", "Value", "Cum", "Change" }
 
 -- Search debounce. GetMaterialsMatching walks every occupied slot and filters by
 -- name, so running it on every keystroke micro-stutters on a large craft bag.
@@ -156,6 +180,7 @@ end
 -- Runtime control references, created once in Initialize().
 local windowControl   -- top-level container
 local backdrop        -- background + border
+local headerBand      -- accent wash + underline behind the title and scope line
 local titleLabel      -- "<Category> - materials"
 local contextLabel    -- active category/search/diff scope beneath the title
 local headerName, headerQty, headerValue, headerCum, headerChange  -- column headers
@@ -357,6 +382,11 @@ local function SetupRow(rowControl, data)
     -- pool of rows across many materials.
     rowControl.bmwData = data
 
+    -- The template declares the columns' geometry; their face comes from the
+    -- shared type scale, so a row of the table reads at the same size as a row of
+    -- the summary panel. No-ops after the first time this control is used.
+    UI.ApplyRowFonts(rowControl, ROW_COLUMNS)
+
     rowControl:GetNamedChild("Icon"):SetTexture(data.icon)
 
     local nameLabel = rowControl:GetNamedChild("Name")
@@ -380,9 +410,12 @@ local function SetupRow(rowControl, data)
     -- The action buttons occupy a fixed strip at the right edge, preserving the
     -- column geometry whether they are shown or hidden. Diff rows do not carry a
     -- live Craft Bag slot, so never offer withdrawal actions for them.
-    local hoverBackdrop = rowControl:GetNamedChild("Hover")
-    hoverBackdrop:SetCenterColor(0.32, 0.32, 0.32, 0.24)
-    hoverBackdrop:SetEdgeColor(0, 0, 0, 0)
+    -- The row wash is the shared accent hover, not this file's own grey: pointing
+    -- at a material row, a category row in the summary panel and a queue row in
+    -- the withdraw window now all light up the same way. The backdrop comes from
+    -- the XML template, and UI.PaintRowFill flattens it to a bare rectangle for
+    -- us, so this file states no colours and no edge of its own.
+    UI.PaintRowFill(rowControl:GetNamedChild("Hover"))
     local withdrawButton = rowControl:GetNamedChild("Withdraw")
     local queueButton = rowControl:GetNamedChild("Queue")
     rowControl.bmwRowHovered = false
@@ -413,7 +446,7 @@ local function SetupRow(rowControl, data)
 
         local function ShowActionTooltip(control, stringId)
             InitializeTooltip(InformationTooltip, control, BOTTOM, 0, -2, TOP)
-            InformationTooltip:AddLine(GetString(stringId), "ZoFontGame", 0.78, 0.77, 0.72)
+            UI.TipLine(InformationTooltip, GetString(stringId))
         end
 
         local function CancelActionHide()
@@ -499,55 +532,59 @@ local function SetupRow(rowControl, data)
 
             InitializeTooltip(InformationTooltip, self, BOTTOM, 0, -2, TOP)
 
+            -- Composed in the shared tooltip voice: a title, block openers, and
+            -- one line per fact whose tone names the KIND of fact it carries (a
+            -- gold figure, a fee leaving the sale, the take-home amount, a plain
+            -- count, a warning). No font or colour is decided here.
+            --
             -- Title: the quality-colored material name (the |c codes are carried in
-            -- the string itself, so the AddLine r,g,b is just the uncolored base).
-            InformationTooltip:AddLine(
-                addon.Valuation.ColorizeMaterialName(rowData.name, rowData.quality),
-                "ZoFontHeader2", 0.86, 0.85, 0.78)
-            ZO_Tooltip_AddDivider(InformationTooltip)
+            -- the string itself, so the tone underneath it is just the base).
+            UI.TipTitle(InformationTooltip,
+                addon.Valuation.ColorizeMaterialName(rowData.name, rowData.quality))
 
             -- Value block: stock, market price, explicit guild-trader deductions,
             -- and take-home amount. Technical provenance follows in its own block.
-            InformationTooltip:AddLine(GetString(SI_BMW_ROW_TOOLTIP_VALUE_SECTION),
-                "ZoFontWinH5", 0.44, 0.80, 0.62)
-            InformationTooltip:AddLine(stringformat(GetString(SI_BMW_ROW_TOOLTIP_QTY),
-                ZO_LocalizeDecimalNumber(rowData.count or 0)), "ZoFontGame", 0.78, 0.77, 0.72)
+            UI.TipSection(InformationTooltip, GetString(SI_BMW_ROW_TOOLTIP_VALUE_SECTION))
+            UI.TipLine(InformationTooltip, stringformat(GetString(SI_BMW_ROW_TOOLTIP_QTY),
+                ZO_LocalizeDecimalNumber(rowData.count or 0)), "soft")
 
             if rowData.priced and rowData.unitPrice and rowData.unitPrice > 0 then
-                InformationTooltip:AddLine(stringformat(GetString(SI_BMW_ROW_TOOLTIP_UNIT),
-                    FormatGold(rowData.unitPrice)), "ZoFontGame", 0.78, 0.77, 0.72)
-                InformationTooltip:AddLine(stringformat(GetString(SI_BMW_ROW_TOOLTIP_TOTAL),
-                    FormatGold(rowData.gold)), "ZoFontGame", 0.78, 0.77, 0.72)
-                InformationTooltip:AddLine(stringformat(GetString(SI_BMW_ROW_TOOLTIP_LISTING_FEE),
-                    FormatGold(rowData.gold * FEE_LISTING_RATE)), "ZoFontGame", 0.82, 0.56, 0.37)
-                InformationTooltip:AddLine(stringformat(GetString(SI_BMW_ROW_TOOLTIP_SALES_TAX),
-                    FormatGold(rowData.gold * FEE_SALES_RATE)), "ZoFontGame", 0.82, 0.56, 0.37)
-                InformationTooltip:AddLine(stringformat(GetString(SI_BMW_ROW_TOOLTIP_NET),
-                    FormatGold(private.NetAfterFees(rowData.gold))), "ZoFontGame", 0.44, 0.80, 0.62)
+                UI.TipLine(InformationTooltip, stringformat(GetString(SI_BMW_ROW_TOOLTIP_UNIT),
+                    FormatGold(rowData.unitPrice)), "soft")
+                UI.TipLine(InformationTooltip, stringformat(GetString(SI_BMW_ROW_TOOLTIP_TOTAL),
+                    FormatGold(rowData.gold)), "gold")
+                UI.TipLine(InformationTooltip, stringformat(GetString(SI_BMW_ROW_TOOLTIP_LISTING_FEE),
+                    FormatGold(rowData.gold * FEE_LISTING_RATE)), "warn")
+                UI.TipLine(InformationTooltip, stringformat(GetString(SI_BMW_ROW_TOOLTIP_SALES_TAX),
+                    FormatGold(rowData.gold * FEE_SALES_RATE)), "warn")
+                UI.TipLine(InformationTooltip, stringformat(GetString(SI_BMW_ROW_TOOLTIP_NET),
+                    FormatGold(private.NetAfterFees(rowData.gold))), "accent")
             else
-                InformationTooltip:AddLine(GetString(SI_BMW_ROW_TOOLTIP_UNPRICED),
-                    "ZoFontGame", 0.82, 0.56, 0.37)
+                UI.TipLine(InformationTooltip, GetString(SI_BMW_ROW_TOOLTIP_UNPRICED), "warn")
             end
 
             if rowData.priced and rowData.unitPrice and rowData.unitPrice > 0 then
                 local sourceName = rowData.source and addon.Valuation.GetSourceDisplayName(rowData.source)
                 local growthText = FormatGrowthText(rowData)
                 if sourceName or growthText then
-                    ZO_Tooltip_AddDivider(InformationTooltip)
-                    InformationTooltip:AddLine(GetString(SI_BMW_ROW_TOOLTIP_TECHNICAL_SECTION),
-                        "ZoFontWinH5", 0.44, 0.80, 0.62)
+                    UI.TipDivider(InformationTooltip)
+                    UI.TipSection(InformationTooltip,
+                        GetString(SI_BMW_ROW_TOOLTIP_TECHNICAL_SECTION))
                 end
+                -- Provenance is a footnote about the figures above, not another
+                -- figure, so both lines drop to the caption size.
                 if sourceName then
-                    InformationTooltip:AddLine(stringformat(GetString(SI_BMW_ROW_TOOLTIP_SOURCE),
-                        sourceName), "ZoFontGame", 0.78, 0.77, 0.72)
+                    UI.TipCaption(InformationTooltip, stringformat(
+                        GetString(SI_BMW_ROW_TOOLTIP_SOURCE), sourceName))
                 end
                 -- Price-change line, only when there's a comparable figure (shares
                 -- the arrow+color idiom of the Change column via FormatGrowthText).
                 if growthText then
-                    InformationTooltip:AddLine(stringformat(GetString(SI_BMW_ROW_TOOLTIP_CHANGE),
-                        growthText), "ZoFontGame", 0.78, 0.77, 0.72)
+                    UI.TipCaption(InformationTooltip, stringformat(
+                        GetString(SI_BMW_ROW_TOOLTIP_CHANGE), growthText))
                 end
             end
+
 
         end)
         rowControl:SetHandler("OnMouseExit", function(self)
@@ -557,6 +594,14 @@ local function SetupRow(rowControl, data)
             QueueActionHide()
         end)
     end
+end
+
+-- Height of the header wash: the identity block this window opens with (its title
+-- plus the scope line beneath it) and their top padding, closed by a little air
+-- under the last line so the accent underline does not crowd the text above it.
+-- Derived rather than a constant, so a change to either row carries the band.
+local function HeaderBandHeight()
+    return PADDING + TITLE_HEIGHT + CONTEXT_HEIGHT + METRIC.BAND_PAD
 end
 
 function DetailWindow.Initialize()
@@ -618,13 +663,23 @@ function DetailWindow.Initialize()
 
     backdrop = WINDOW_MANAGER:CreateControl(addon.name .. "_DetailBackdrop", windowControl, CT_BACKDROP)
     backdrop:SetAnchorFill(windowControl)
-    backdrop:SetEdgeTexture("", 1, 1, 1)
-    backdrop:SetInsets(2, 2, -2, -2)
-    backdrop:SetCenterColor(0.05, 0.05, 0.06, BG_ALPHA)
-    backdrop:SetEdgeColor(0.42, 0.40, 0.34, 0.9)
+    -- One call for the whole shell: ground, border, insets and opacity all come
+    -- from the shared chrome, so this window is the same surface as the other two
+    -- rather than a third slightly different near-black.
+    UI.ApplyPanelChrome(backdrop)
+
+    -- The shared letterhead, behind the title and its scope line: a faint accent
+    -- wash the full width of the window, closed by an accent underline. Created
+    -- before those labels so it sits behind them, and spanning the full width (not
+    -- the inner width) so it reads as a band rather than a floating rectangle.
+    headerBand = UI.CreateHeaderBand(addon.name .. "_DetailHeaderBand", windowControl,
+        WINDOW_WIDTH, HeaderBandHeight())
+    headerBand:SetAnchor(TOPLEFT, windowControl, TOPLEFT, 0, 0)
 
     titleLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_DetailTitle", windowControl, CT_LABEL)
-    titleLabel:SetFont("ZoFontWinH4")
+    -- The section-heading step, not the title step: TITLE_HEIGHT is a 26px row
+    -- shared with the toolbar buttons, and the larger title face would clip in it.
+    titleLabel:SetFont(FONT.heading)
     titleLabel:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
     titleLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     titleLabel:SetMaxLineCount(1)
@@ -640,11 +695,8 @@ function DetailWindow.Initialize()
             return
         end
         InitializeTooltip(InformationTooltip, self, BOTTOMLEFT, 0, 4, TOPLEFT)
-        InformationTooltip:AddLine(GetString(SI_BMW_DETAIL_VISIT_DIFF_TOOLTIP_TITLE),
-            "ZoFontHeader2", ZO_NORMAL_TEXT:UnpackRGB())
-        ZO_Tooltip_AddDivider(InformationTooltip)
-        InformationTooltip:AddLine(GetString(SI_BMW_DETAIL_VISIT_DIFF_TOOLTIP_BODY),
-            "ZoFontGame", 0.86, 0.85, 0.78)
+        UI.TipTitle(InformationTooltip, GetString(SI_BMW_DETAIL_VISIT_DIFF_TOOLTIP_TITLE))
+        UI.TipLine(InformationTooltip, GetString(SI_BMW_DETAIL_VISIT_DIFF_TOOLTIP_BODY))
     end)
     titleLabel:SetHandler("OnMouseExit", function()
         ClearTooltip(InformationTooltip)
@@ -654,7 +706,7 @@ function DetailWindow.Initialize()
     -- category vs whole-bag search vs snapshot comparison. The title stays short
     -- and scannable while this line carries result count, price filter, or age.
     contextLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_DetailContext", windowControl, CT_LABEL)
-    contextLabel:SetFont("ZoFontGameSmall")
+    contextLabel:SetFont(FONT.small)
     contextLabel:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
     contextLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     contextLabel:SetMaxLineCount(1)
@@ -699,7 +751,7 @@ function DetailWindow.Initialize()
     -- editbox (so the editbox is the top-most sibling for mouse hits) and with
     -- mouse explicitly disabled so it never intercepts clicks meant for the box.
     searchHint = WINDOW_MANAGER:CreateControl(addon.name .. "_DetailSearchHint", searchBg, CT_LABEL)
-    searchHint:SetFont("ZoFontGame")
+    searchHint:SetFont(FONT.body)
     searchHint:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     searchHint:SetAnchor(LEFT, searchBg, LEFT, 8, 0)
     searchHint:SetMouseEnabled(false)
@@ -708,7 +760,7 @@ function DetailWindow.Initialize()
     searchBox = WINDOW_MANAGER:CreateControl(addon.name .. "_DetailSearch", searchBg, CT_EDITBOX)
     searchBox:SetAnchor(TOPLEFT, searchBg, TOPLEFT, 8, 2)
     searchBox:SetAnchor(BOTTOMRIGHT, searchBg, BOTTOMRIGHT, -8, -2)
-    searchBox:SetFont("ZoFontGame")
+    searchBox:SetFont(FONT.body)
     searchBox:SetMaxInputChars(50)
     searchBox:SetMouseEnabled(true)
     searchBox:SetText("")
@@ -752,8 +804,7 @@ function DetailWindow.Initialize()
     end)
     searchClearButton:SetHandler("OnMouseEnter", function(self)
         InitializeTooltip(InformationTooltip, self, BOTTOM, 0, -2, TOP)
-        InformationTooltip:AddLine(GetString(SI_BMW_DETAIL_SEARCH_CLEAR_TOOLTIP),
-            "ZoFontGame", 0.78, 0.77, 0.72)
+        UI.TipLine(InformationTooltip, GetString(SI_BMW_DETAIL_SEARCH_CLEAR_TOOLTIP))
     end)
     searchClearButton:SetHandler("OnMouseExit", function()
         ClearTooltip(InformationTooltip)
@@ -771,7 +822,7 @@ function DetailWindow.Initialize()
 
     local snapshotGroupLabel = WINDOW_MANAGER:CreateControl(
         addon.name .. "_DetailSnapshotGroupLabel", windowControl, CT_LABEL)
-    snapshotGroupLabel:SetFont("ZoFontGameSmall")
+    snapshotGroupLabel:SetFont(FONT.small)
     snapshotGroupLabel:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
     snapshotGroupLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     snapshotGroupLabel:SetDimensions(GROUP_LABEL_WIDTH, TITLE_HEIGHT)
@@ -781,9 +832,8 @@ function DetailWindow.Initialize()
     local function WireButtonTooltip(button, titleId, bodyId)
         button:SetHandler("OnMouseEnter", function(self)
             InitializeTooltip(InformationTooltip, self, BOTTOM, 0, -2, TOP)
-            InformationTooltip:AddLine(GetString(titleId), "ZoFontWinH5", 0.44, 0.80, 0.62)
-            ZO_Tooltip_AddDivider(InformationTooltip)
-            InformationTooltip:AddLine(GetString(bodyId), "ZoFontGame", 0.78, 0.77, 0.72)
+            UI.TipTitle(InformationTooltip, GetString(titleId))
+            UI.TipLine(InformationTooltip, GetString(bodyId))
         end)
         button:SetHandler("OnMouseExit", function()
             ClearTooltip(InformationTooltip)
@@ -837,9 +887,8 @@ function DetailWindow.Initialize()
             titleId, bodyId = SI_BMW_DETAIL_BTN_CHANGES_TOOLTIP_TITLE, SI_BMW_DETAIL_BTN_CHANGES_TOOLTIP_BODY
         end
         InitializeTooltip(InformationTooltip, self, BOTTOM, 0, -2, TOP)
-        InformationTooltip:AddLine(GetString(titleId), "ZoFontWinH5", 0.44, 0.80, 0.62)
-        ZO_Tooltip_AddDivider(InformationTooltip)
-        InformationTooltip:AddLine(GetString(bodyId), "ZoFontGame", 0.78, 0.77, 0.72)
+        UI.TipTitle(InformationTooltip, GetString(titleId))
+        UI.TipLine(InformationTooltip, GetString(bodyId))
     end)
     changesButton:SetHandler("OnMouseExit", function()
         ClearTooltip(InformationTooltip)
@@ -866,7 +915,7 @@ function DetailWindow.Initialize()
     -- players infer it from a tooltip or from the Changes view.
     snapshotStatusLabel = WINDOW_MANAGER:CreateControl(
         addon.name .. "_DetailSnapshotStatus", windowControl, CT_LABEL)
-    snapshotStatusLabel:SetFont("ZoFontGameSmall")
+    snapshotStatusLabel:SetFont(FONT.small)
     snapshotStatusLabel:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
     snapshotStatusLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     snapshotStatusLabel:SetMaxLineCount(1)
@@ -880,7 +929,7 @@ function DetailWindow.Initialize()
     -- diff, where priced/unpriced has a different meaning.
     local filterGroupLabel = WINDOW_MANAGER:CreateControl(
         addon.name .. "_DetailFilterGroupLabel", windowControl, CT_LABEL)
-    filterGroupLabel:SetFont("ZoFontGameSmall")
+    filterGroupLabel:SetFont(FONT.small)
     filterGroupLabel:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
     filterGroupLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     filterGroupLabel:SetDimensions(GROUP_LABEL_WIDTH, TITLE_HEIGHT)
@@ -916,13 +965,11 @@ function DetailWindow.Initialize()
         previousFilterButton = button
     end
 
-    selectedFilterFrame = WINDOW_MANAGER:CreateControl(
-        addon.name .. "_DetailSelectedFilterFrame", windowControl, CT_BACKDROP)
-    selectedFilterFrame:SetEdgeTexture("", 1, 1, 1)
-    selectedFilterFrame:SetInsets(-1, -1, -1, -1)
-    selectedFilterFrame:SetCenterColor(0, 0, 0, 0)
-    selectedFilterFrame:SetEdgeColor(0.44, 0.80, 0.62, 0.95)
-    selectedFilterFrame:SetMouseEnabled(false)
+    -- The outline that marks the active price filter. Built by the shared layer, so
+    -- it is provably the same green as the header underline and the row hover wash,
+    -- and its strength is a token rather than a number chosen here.
+    selectedFilterFrame = UI.CreateSelectionFrame(
+        addon.name .. "_DetailSelectedFilterFrame", windowControl)
 
     resetFiltersButton = WINDOW_MANAGER:CreateControlFromVirtual(
         addon.name .. "_DetailResetFilters", windowControl, "ZO_DefaultButton")
@@ -946,7 +993,7 @@ function DetailWindow.Initialize()
     local headerY = filterToolbarY + TITLE_HEIGHT + TOOLBAR_GAP
 
     headerChange = WINDOW_MANAGER:CreateControl(addon.name .. "_DetailHeaderChange", windowControl, CT_LABEL)
-    headerChange:SetFont("ZoFontGameSmall")
+    headerChange:SetFont(FONT.small)
     headerChange:SetHorizontalAlignment(TEXT_ALIGN_RIGHT)
     headerChange:SetDimensions(90, HEADER_HEIGHT)
     headerChange:SetAnchor(TOPRIGHT, windowControl, TOPRIGHT,
@@ -957,45 +1004,42 @@ function DetailWindow.Initialize()
     -- by cumulative share would be identical to sorting by value), so it is a
     -- plain muted label and is skipped by WireHeaderSort/UpdateHeaders below.
     headerCum = WINDOW_MANAGER:CreateControl(addon.name .. "_DetailHeaderCum", windowControl, CT_LABEL)
-    headerCum:SetFont("ZoFontGameSmall")
+    headerCum:SetFont(FONT.small)
     headerCum:SetHorizontalAlignment(TEXT_ALIGN_RIGHT)
     headerCum:SetDimensions(70, HEADER_HEIGHT)
     headerCum:SetAnchor(TOPRIGHT, headerChange, TOPLEFT, -6, 0)
-    headerCum:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_DETAIL_COL_CUM)))
+    headerCum:SetText(Colorize(COLOR_MUTED, CumulativeHeaderText()))
 
     -- The column abbreviation can't carry its full meaning, so a hover tooltip on
-    -- the header spells it out: a bold title line, a divider, then the
-    -- explanation. Matches the (text, font, r, g, b) AddLine idiom used by the
-    -- row tooltip below; InformationTooltip wraps a long line to its own width.
+    -- the header spells it out: a title line, a divider, then the explanation --
+    -- the shared title/body pair every other hover in the addon uses.
+    -- InformationTooltip wraps a long line to its own width.
     headerCum:SetMouseEnabled(true)
     headerCum:SetHandler("OnMouseEnter", function(self)
         InitializeTooltip(InformationTooltip, self, TOP, 0, 4, BOTTOM)
-        InformationTooltip:AddLine(GetString(SI_BMW_DETAIL_CUM_TOOLTIP_TITLE),
-            "ZoFontWinH5", 0.44, 0.80, 0.62)
-        ZO_Tooltip_AddDivider(InformationTooltip)
-        InformationTooltip:AddLine(GetString(SI_BMW_DETAIL_CUM_TOOLTIP_BODY),
-            "ZoFontGame", 0.78, 0.77, 0.72)
+        UI.TipTitle(InformationTooltip, GetString(SI_BMW_DETAIL_CUM_TOOLTIP_TITLE))
+        UI.TipLine(InformationTooltip, GetString(SI_BMW_DETAIL_CUM_TOOLTIP_BODY))
     end)
     headerCum:SetHandler("OnMouseExit", function()
         ClearTooltip(InformationTooltip)
     end)
 
     headerValue = WINDOW_MANAGER:CreateControl(addon.name .. "_DetailHeaderValue", windowControl, CT_LABEL)
-    headerValue:SetFont("ZoFontGameSmall")
+    headerValue:SetFont(FONT.small)
     headerValue:SetHorizontalAlignment(TEXT_ALIGN_RIGHT)
     headerValue:SetDimensions(150, HEADER_HEIGHT)
     headerValue:SetAnchor(TOPRIGHT, headerCum, TOPLEFT, -6, 0)
     headerValue:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_DETAIL_COL_VALUE)))
 
     headerQty = WINDOW_MANAGER:CreateControl(addon.name .. "_DetailHeaderQty", windowControl, CT_LABEL)
-    headerQty:SetFont("ZoFontGameSmall")
+    headerQty:SetFont(FONT.small)
     headerQty:SetHorizontalAlignment(TEXT_ALIGN_RIGHT)
     headerQty:SetDimensions(70, HEADER_HEIGHT)
     headerQty:SetAnchor(TOPRIGHT, headerValue, TOPLEFT, -6, 0)
     headerQty:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_DETAIL_COL_QTY)))
 
     headerName = WINDOW_MANAGER:CreateControl(addon.name .. "_DetailHeaderName", windowControl, CT_LABEL)
-    headerName:SetFont("ZoFontGameSmall")
+    headerName:SetFont(FONT.small)
     headerName:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
     headerName:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING + 2, headerY)
     headerName:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_DETAIL_COL_NAME)))
@@ -1031,7 +1075,11 @@ function DetailWindow.Initialize()
             if viewMode == "diff" then
                 return
             end
-            self:SetColor(1, 1, 1, 1)
+            -- Hovering promotes the header from the secondary reading tone to the
+            -- primary one. Both come from the palette, so the affordance is a step
+            -- along the addon's own scale rather than a jump to raw white.
+            local r, g, b = UI.Tone("name")
+            self:SetColor(r, g, b, 1)
         end)
         headerControl:SetHandler("OnMouseExit", function()
             UpdateHeaders()
@@ -1044,12 +1092,11 @@ function DetailWindow.Initialize()
     UpdateColumnLayout()
     UpdateHeaders()
 
-    -- Divider under the headers.
+    -- Divider under the headers, at the shared structural weight: it closes the
+    -- header block off from the table, the same job the rule under the summary
+    -- panel's identity block does.
     local dividerY = headerY + HEADER_HEIGHT
-    divider = WINDOW_MANAGER:CreateControl(addon.name .. "_DetailDivider", windowControl, CT_TEXTURE)
-    divider:SetTexture("EsoUI/Art/Miscellaneous/horizontalDivider.dds")
-    divider:SetDimensions(innerWidth, 4)
-    divider:SetColor(1, 1, 1, 0.4)
+    divider = UI.CreateRule(addon.name .. "_DetailDivider", windowControl, innerWidth, "strong")
     divider:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, dividerY)
 
     -- Scroll list, instantiated from the XML virtual so its rows can be
@@ -1065,7 +1112,7 @@ function DetailWindow.Initialize()
         "BureauOfMaterialWorth_DetailRow", ROW_HEIGHT, SetupRow)
 
     emptyLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_DetailEmpty", windowControl, CT_LABEL)
-    emptyLabel:SetFont("ZoFontGame")
+    emptyLabel:SetFont(FONT.body)
     emptyLabel:SetHorizontalAlignment(TEXT_ALIGN_CENTER)
     emptyLabel:SetAnchor(TOPLEFT, listControl, TOPLEFT, 0, 0)
     emptyLabel:SetAnchor(TOPRIGHT, listControl, TOPRIGHT, 0, 0)
@@ -1078,14 +1125,15 @@ function DetailWindow.Initialize()
     -- value + bag share, or the diff's net movement). Right-aligned so the figure
     -- sits under the value columns.
     local footerDividerY = listY + ROW_HEIGHT * LIST_MAX_ROWS + DIVIDER_GAP
-    footerDivider = WINDOW_MANAGER:CreateControl(addon.name .. "_DetailFooterDivider", windowControl, CT_TEXTURE)
-    footerDivider:SetTexture("EsoUI/Art/Miscellaneous/horizontalDivider.dds")
-    footerDivider:SetDimensions(innerWidth, 4)
-    footerDivider:SetColor(1, 1, 1, 0.4)
+    -- The lighter of the two shared weights: the summary belongs to the table it
+    -- totals, so this rule must not compete with the list above it -- exactly the
+    -- distinction the summary panel's own footer rule makes.
+    footerDivider = UI.CreateRule(addon.name .. "_DetailFooterDivider", windowControl,
+        innerWidth, "soft")
     footerDivider:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, footerDividerY)
 
     footerLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_DetailFooter", windowControl, CT_LABEL)
-    footerLabel:SetFont("ZoFontGameSmall")
+    footerLabel:SetFont(FONT.small)
     footerLabel:SetHorizontalAlignment(TEXT_ALIGN_RIGHT)
     footerLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     footerLabel:SetDimensions(innerWidth, FOOTER_HEIGHT)
@@ -1532,7 +1580,7 @@ function UpdateHeaders()
     apply(headerChange, SI_BMW_DETAIL_COL_CHANGE, "change")
     -- The Cum header is non-sortable; restore its plain label (UpdateHeaders may
     -- be returning from diff mode, which overwrote it with "Share").
-    headerCum:SetText(GetString(SI_BMW_DETAIL_COL_CUM))
+    headerCum:SetText(CumulativeHeaderText())
     headerCum:SetColor(HEADER_MUTED_R, HEADER_MUTED_G, HEADER_MUTED_B, 1)
 end
 

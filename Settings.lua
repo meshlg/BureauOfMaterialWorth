@@ -6,6 +6,8 @@ local private = addon.private
 
 local GetString = GetString
 local tonumber = tonumber
+local zo_round = zo_round
+local stringformat = string.format
 
 -- Default account-wide configuration. Kept deliberately small: this addon has
 -- no gameplay-affecting state, only presentation/diagnostics.
@@ -36,7 +38,10 @@ local tonumber = tonumber
 --                         diff view; nil until "Remember" is pressed (then overwritten). Material
 --                         entries are compact strings decoded by Valuation's CaptureSnapshot/GetDiffMaterials.
 local DEFAULT_SAVED_VARS = {
-    debugMode = 1,
+    -- Silent by default (0=off), matching the core's shipping debugMode. A fresh
+    -- install must not print diagnostics into chat; the user raises this from the
+    -- settings panel or /bmw debug when reporting a problem.
+    debugMode = 0,
     showCategoryBreakdown = true,
     showCategoryIcons = true,
     colorScaleGold = true,
@@ -97,7 +102,58 @@ function Settings.InitializeSavedVariables()
         addon.debugMode = level
     end
 
+    Settings.NormalizeWindowWidth()
+
     return private.savedVars
+end
+
+-- Bring a saved windowWidth back inside the layout's supported range.
+-- ---------------------------------------------------------------------------
+-- Window.CurrentWidth() clamps defensively every time it reads the value, so a
+-- bad save never broke the layout -- but it only clamped the *reading*, leaving
+-- the out-of-range number in SavedVariables. The slider's getFunc reads the raw
+-- save, so a width carried over from a build with different bounds (or edited by
+-- hand) showed one number in the settings panel while the panel rendered
+-- another, and the mismatch persisted until the user happened to drag the
+-- slider. Normalizing once on load makes the saved value, the slider and the
+-- rendered width agree from the first frame.
+--
+-- Also snaps to the slider's step so the stored value is one the slider can
+-- actually represent, and repairs a non-numeric entry (a corrupt or
+-- hand-edited save) by falling back to the default rather than leaving a string
+-- where the layout expects a number.
+function Settings.NormalizeWindowWidth()
+    local sv = private.savedVars
+    if not sv then
+        return
+    end
+
+    local minWidth = (addon.Window and addon.Window.MIN_WIDTH) or 400
+    local maxWidth = (addon.Window and addon.Window.MAX_WIDTH) or 600
+    local step = (addon.Window and addon.Window.WIDTH_STEP) or 10
+    local default = (addon.Window and addon.Window.DEFAULT_WIDTH)
+        or DEFAULT_SAVED_VARS.windowWidth
+
+    local width = tonumber(sv.windowWidth)
+    if not width then
+        sv.windowWidth = default
+        return
+    end
+
+    -- Snap to the step relative to the range's floor, so the snapped values line
+    -- up with the slider's own stops (min, min+step, ...) instead of multiples of
+    -- the step in absolute terms.
+    if step > 0 then
+        width = minWidth + zo_round((width - minWidth) / step) * step
+    end
+
+    if width < minWidth then
+        width = minWidth
+    elseif width > maxWidth then
+        width = maxWidth
+    end
+
+    sv.windowWidth = width
 end
 
 function Settings.IsCategoryBreakdownEnabled()

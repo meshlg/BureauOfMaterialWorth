@@ -49,7 +49,9 @@ local BAG = BAG_VIRTUAL
 --   stacks -- ceil(items / STACK_SIZE), how many 200-item stacks the volume is
 -- The slot count is what the incremental aggregates track; the stack count is
 -- derived from the item total at snapshot time (see GetSnapshot).
-local STACK_SIZE = 200
+-- Declared once in the core as private.STACK_SIZE and shared with
+-- WithdrawDialog, so the two modules can never disagree on what a full stack is.
+local STACK_SIZE = private.STACK_SIZE
 
 -- Price-history bookkeeping for the detail window's "price change" column.
 -- ---------------------------------------------------------------------------
@@ -441,6 +443,12 @@ local EXCLUDED_FROM_VALUATION = {
 -- In both modes the gold delta is gated on the item count changing, so a pure
 -- price drift (restart + price reimport, same stock) reports no delta.
 local deltaSinceLastVisit = nil
+-- Composition changed since the acknowledged baseline. Tracked separately from
+-- deltaSinceLastVisit because an even trade (200 of one material out, 200 of an
+-- equally-priced one in) yields a gold delta of exactly zero while still being a
+-- real, reviewable change. Gating the footer row on the gold delta alone made
+-- those changes unacknowledgeable, so the baseline could never advance past them.
+local visitChangePending = false
 local sessionBaseGold = nil   -- session-mode acknowledged baseline gold
 local sessionBaseline = nil   -- session-mode acknowledged material baseline
 local acknowledgedVisitDetails = nil -- retained while the acknowledged detail view is open
@@ -457,6 +465,15 @@ local priceHistoryUpdatePending = false
 local priceLookupItemIds = {}      -- itemIds queried from LibPrice in the current pass
 local isDirty = true        -- valuation may be stale; rescan on next show
 local isBagVisible = false
+
+-- Incremental slot applies accumulate floating-point error in grandGold (each
+-- one is a subtract-then-add of a price * stack product) and can only ever
+-- approximate the true total. Count them and force one full rebuild every
+-- INCREMENTAL_DRIFT_LIMIT applies so a long session of withdrawals cannot let
+-- the displayed total wander away from the bag. The limit is high enough that
+-- normal play never pays for it twice in a row.
+local INCREMENTAL_DRIFT_LIMIT = 250
+local incrementalApplies = 0
 
 -- Append the current grand total to the value-history ring buffer. Called once
 -- per craft-bag open (after the delta block, so grandGold/grandItems are the
@@ -480,6 +497,11 @@ local function RecordValuePoint()
     -- An older save (or a partially-defaulted table) may lack either field.
     hist.entries = hist.entries or {}
     hist.head = hist.head or 0
+    -- A save written when the capacity was larger can carry an out-of-range
+    -- head; clamping here keeps every downstream modulus walk in bounds.
+    if type(hist.head) ~= "number" or hist.head < 0 or hist.head > VALUE_HISTORY_CAPACITY then
+        hist.head = 0
+    end
 
     local now = GetTimeStamp()
     local newest = hist.head > 0 and hist.entries[hist.head] or nil
@@ -675,7 +697,12 @@ end
 -- search keystroke, or a live refresh no longer re-resolve every row. The link is
 -- the language-independent source of truth, so a stale name never survives a
 -- game-language change within a session (the cache lives only for the session).
-local function GetDisplayName(itemId, itemLink)
+--
+-- Deliberately NOT named GetDisplayName: ESO defines a global GetDisplayName()
+-- that returns the player's "@account" handle, and a local of the same name
+-- shadows it for the rest of the file. Nothing here needs the account handle
+-- today, but the collision made the two impossible to tell apart at a glance.
+local function GetMaterialDisplayName(itemId, itemLink)
     local cached = nameCache[itemId]
     if cached ~= nil then
         return cached
@@ -734,7 +761,10 @@ local function RemoveSlotFromAggregates(slotIndex)
         stat.slots = stat.slots - 1
         stat.items = stat.items - info.stack
         if not info.priced then
-            stat.unpricedSlots = stat.unpricedSlots - 1
+            -- Clamp at zero: a slot whose `priced` verdict flipped between the
+            -- add and this remove would otherwise drive the counter negative
+            -- and make the footer report a nonsense unpriced count.
+            stat.unpricedSlots = stat.unpricedSlots > 0 and (stat.unpricedSlots - 1) or 0
         end
         if stat.slots <= 0 then
             categoryStats[info.category] = nil
@@ -742,10 +772,13 @@ local function RemoveSlotFromAggregates(slotIndex)
     end
 
     grandGold = grandGold - info.value
-    grandSlots = grandSlots - 1
-    grandItems = grandItems - info.stack
+    grandSlots = grandSlots > 0 and (grandSlots - 1) or 0
+    grandItems = grandItems > 0 and (grandItems - info.stack) or 0
+    if grandItems < 0 then
+        grandItems = 0
+    end
     if not info.priced then
-        grandUnpricedSlots = grandUnpricedSlots - 1
+        grandUnpricedSlots = grandUnpricedSlots > 0 and (grandUnpricedSlots - 1) or 0
     end
 
     -- Drop this slot from the per-source tally so the footer's "Prices: X"
@@ -817,6 +850,8 @@ local function FullRescan()
 
     lastInventoryUpdateMs = GetGameTimeMilliseconds()
     isDirty = false
+    -- Totals are exact again, so the incremental drift budget starts over.
+    incrementalApplies = 0
     UpdatePriceHistoryBaselines()
     LogInfo(SI_BMW_LOG_RESCAN_DONE, scanned, private.FormatGold(grandGold))
 end
@@ -859,6 +894,11 @@ local function QueueWindowRefresh()
                 FullRescan()
                 fullUpdateRescanCount = fullUpdateRescanCount + 1
             end
+        elseif isBagVisible and incrementalApplies >= INCREMENTAL_DRIFT_LIMIT then
+            -- Enough incremental applies have stacked up that accumulated
+            -- floating-point error could be visible; rebuild from scratch once
+            -- (this resets the counter) before the refresh below renders.
+            FullRescan()
         end
 
         RefreshWindow()
@@ -895,6 +935,12 @@ local function RepriceUnpricedSlots()
         AddSlotToAggregates(stale[i].slotIndex, info)
         if info and info.priced then
             healed = healed + 1
+        elseif info == nil then
+            -- The slot emptied between the collect pass and now (a withdrawal
+            -- landed mid-retry). Its contribution is already removed, but the
+            -- bag no longer matches what we last scanned, so mark the valuation
+            -- stale instead of leaving the panel on a silently-short total.
+            isDirty = true
         end
     end
 
@@ -973,6 +1019,7 @@ local function OnSingleSlotUpdate(eventCode, bagId, slotIndex, isNewItem, soundC
     RemoveSlotFromAggregates(slotIndex)
     local info = ComputeSlot(slotIndex)
     AddSlotToAggregates(slotIndex, info)
+    incrementalApplies = incrementalApplies + 1
     lastInventoryUpdateMs = GetGameTimeMilliseconds()
     UpdatePriceHistoryBaselines()
     LogDebug(SI_BMW_LOG_SLOT_UPDATED, slotIndex, private.FormatGold(info and info.value or 0))
@@ -1057,20 +1104,28 @@ function FinalizeVisit(pricesReadyForSnapshot)
     -- the footer row, so changes accumulate across bag opens. A pure price drift
     -- with unchanged stock remains hidden rather than reading as a material change.
     local mode = (sv and sv.deltaMode) or "visit"
+    -- True only when this call actually compared the bag against an existing
+    -- baseline. When no baseline existed there is nothing to conclude about a
+    -- previously-stored breakdown, so it must be left alone rather than cleared.
+    local comparedAgainstBaseline = false
 
     if mode == "session" then
         -- Establish the session baseline quietly on first open, then retain it
         -- until manual inspection acknowledges the accumulated changes.
         comparisonGold = sessionBaseGold
         if sessionBaseGold ~= nil and sessionBaseline then
+            comparedAgainstBaseline = true
             visitDetails = BuildVisitDeltaDetails(sessionBaseline)
             if visitDetails and visitDetails.hasQuantityChange then
                 deltaSinceLastVisit = grandGold - sessionBaseGold
+                visitChangePending = true
             else
                 deltaSinceLastVisit = nil
+                visitChangePending = false
             end
         else
             deltaSinceLastVisit = nil
+            visitChangePending = false
         end
         if sessionBaseGold == nil then
             sessionBaseGold = grandGold
@@ -1084,19 +1139,25 @@ function FinalizeVisit(pricesReadyForSnapshot)
         local previousItems = sv.lastVisitItems
         local previousBaseline = sv.lastVisitBaseline
         if previousGold ~= nil and previousBaseline and previousBaseline.materials then
+            comparedAgainstBaseline = true
             visitDetails, currentBaseline = BuildVisitDeltaDetails(previousBaseline)
             if visitDetails and visitDetails.hasQuantityChange then
                 deltaSinceLastVisit = grandGold - previousGold
+                visitChangePending = true
             else
                 deltaSinceLastVisit = nil
+                visitChangePending = false
             end
         elseif previousGold ~= nil and previousItems ~= nil and previousItems ~= grandItems then
             -- Older saves may have aggregate totals but no material baseline.
             -- Preserve their previous behavior for one visit, then replace it
             -- below with the composition-aware baseline format.
+            comparedAgainstBaseline = true
             deltaSinceLastVisit = grandGold - previousGold
+            visitChangePending = true
         else
             deltaSinceLastVisit = nil
+            visitChangePending = false
         end
         if previousGold == nil or not previousBaseline or not previousBaseline.materials then
             sv.lastVisitGold = grandGold
@@ -1105,12 +1166,22 @@ function FinalizeVisit(pricesReadyForSnapshot)
         end
     else
         deltaSinceLastVisit = nil
+        visitChangePending = false
     end
 
     if sv then
         -- Keep the unacknowledged breakdown across restarts so merely opening the
-        -- Craft Bag never loses a change awaiting manual review.
-        sv.lastVisitDetails = CompressVisitDetails(visitDetails)
+        -- Craft Bag never loses a change awaiting manual review. Only overwrite a
+        -- stored breakdown when this visit produced one, or when a real comparison
+        -- concluded nothing is pending. Writing an unconditional nil here used to
+        -- wipe an unacknowledged report: switching deltaMode makes the first open
+        -- in the new mode establish a fresh baseline without computing details,
+        -- which silently discarded the breakdown accumulated under the old mode.
+        if visitDetails then
+            sv.lastVisitDetails = CompressVisitDetails(visitDetails)
+        elseif comparedAgainstBaseline and not visitChangePending then
+            sv.lastVisitDetails = nil
+        end
     end
 
     -- Summary/detailed modes retain the first-open session digest. Important
@@ -1149,7 +1220,11 @@ end
 -- footer row disappear even while DetailWindow remains open.
 function Valuation.AcknowledgeVisitDelta()
     local sv = private.savedVars
-    if not sv or not deltaSinceLastVisit or deltaSinceLastVisit == 0 then
+    -- Accept the acknowledgement whenever a composition change is pending, even
+    -- if the gold delta nets to exactly zero (an even swap). Requiring a non-zero
+    -- delta here left such changes permanently stuck: the row could not be
+    -- cleared, so the baseline never advanced past them.
+    if not sv or not visitChangePending then
         return
     end
 
@@ -1166,6 +1241,7 @@ function Valuation.AcknowledgeVisitDelta()
 
     sv.lastVisitDetails = nil
     deltaSinceLastVisit = nil
+    visitChangePending = false
     RefreshWindow()
 end
 
@@ -1297,6 +1373,9 @@ function Valuation.GetSnapshot(sortByValue)
         items = grandItems,
         unpricedSlots = grandUnpricedSlots,
         delta = deltaSinceLastVisit,
+        -- Lets the footer show (and accept a click on) an even swap whose gold
+        -- delta is zero but whose composition still changed.
+        deltaPending = visitChangePending,
         deltaMode = (private.savedVars and private.savedVars.deltaMode) or "visit",
         sourceName = sourceName,
         sourceShort = sourceShort,
@@ -1328,15 +1407,43 @@ function Valuation.GetValueHistory()
     end
 
     local entries = hist.entries
-    local count = #entries
     local head = hist.head
+    -- Count occupied slots explicitly against the fixed capacity instead of
+    -- trusting `#entries`: a save written by an older build (or one carrying a
+    -- hole from a partially-defaulted table) makes the array length operator
+    -- undefined in Lua 5.1, and using it as the ring modulus silently
+    -- reorders the samples. Capacity is the only stable modulus.
+    local stored = 0
+    for i = 1, VALUE_HISTORY_CAPACITY do
+        if entries[i] then
+            stored = stored + 1
+        end
+    end
+    if stored == 0 then
+        return {}
+    end
+
     local out = {}
-    -- Before the ring fills, slots 1..head are in order and head == count, so
-    -- the walk below degenerates to 1..count. Once full, head is somewhere in
-    -- the middle and the oldest sample sits at head+1 (wrapping).
-    for offset = 1, count do
-        local idx = (head + offset - 1) % count + 1
-        out[#out + 1] = entries[idx]
+    if stored < VALUE_HISTORY_CAPACITY then
+        -- Ring not full yet: writes have only ever gone 1, 2, 3, ... head, so
+        -- the slots are already chronological. Skip any hole rather than
+        -- emitting nil into the sparkline input.
+        for i = 1, VALUE_HISTORY_CAPACITY do
+            local entry = entries[i]
+            if entry then
+                out[#out + 1] = entry
+            end
+        end
+    else
+        -- Full ring: head is the newest sample, so the oldest sits at head+1
+        -- (wrapping) and a capacity-long walk from there is chronological.
+        for offset = 1, VALUE_HISTORY_CAPACITY do
+            local idx = (head + offset - 1) % VALUE_HISTORY_CAPACITY + 1
+            local entry = entries[idx]
+            if entry then
+                out[#out + 1] = entry
+            end
+        end
     end
     return out
 end
@@ -1499,9 +1606,9 @@ local function BuildMaterialRow(slotIndex, info)
         -- material is held in exactly one craft-bag slot, so this
         -- itemId -> slotIndex mapping is 1:1 for the run.
         slotIndex = slotIndex,
-        -- Resolved (and memoized) display name; see GetDisplayName. Stable per
-        -- itemId, so the detail window's repeated rebuilds reuse it.
-        name = GetDisplayName(info.itemId, itemLink),
+        -- Resolved (and memoized) display name; see GetMaterialDisplayName.
+        -- Stable per itemId, so the detail window's rebuilds reuse it.
+        name = GetMaterialDisplayName(info.itemId, itemLink),
         icon = GetItemLinkIcon(itemLink),
         quality = quality,
         count = info.stack,
@@ -1579,7 +1686,7 @@ function Valuation.GetMaterialsMatching(query)
 
     local needle = stringlower(query)
     for slotIndex, info in pairs(slotInfo) do
-        local name = GetDisplayName(info.itemId, GetItemLink(BAG, slotIndex))
+        local name = GetMaterialDisplayName(info.itemId, GetItemLink(BAG, slotIndex))
         if stringfind(stringlower(name), needle, 1, true) then
             materials[#materials + 1] = BuildMaterialRow(slotIndex, info)
         end
@@ -1763,7 +1870,7 @@ function Valuation.GetDiffMaterials()
             local itemLink = GetItemLink(BAG, cur.slotIndex)
             rows[#rows + 1] = {
                 itemId = itemId,
-                name = GetDisplayName(itemId, itemLink),
+                name = GetMaterialDisplayName(itemId, itemLink),
                 icon = GetItemLinkIcon(itemLink),
                 quality = GetItemLinkFunctionalQuality(itemLink),
                 diff = true,
@@ -1854,7 +1961,12 @@ function Valuation.GetLastVisitDiffMaterials()
 end
 
 
--- names. Kept here (next to the data) so the window can render a plain string.
+-- Wrap a material name in the game's own quality color, so a row reads with the
+-- same tint the inventory tooltip uses (white/green/blue/purple/gold). Returns
+-- the name untouched when the quality is unknown or the client has no color for
+-- it, so a caller never has to special-case unquality-tagged rows. This is the
+-- single place the addon applies quality coloring to material names. Kept here
+-- (next to the data) so the window can render a plain string.
 function Valuation.ColorizeMaterialName(name, quality)
     if not quality then
         return name

@@ -2,11 +2,22 @@
 local ADDON_NAME = "BureauOfMaterialWorth"
 local SAVED_VARIABLES_NAME = "BureauOfMaterialWorth_SavedVariables"
 
+-- Release identity. This table is the single runtime source of truth for the
+-- version and release date: the footer label, the /bmw status dump and the
+-- settings dashboard all format these two fields instead of carrying their own
+-- copy of the text (previously the string was duplicated in both localizations
+-- and drifted from the manifest). The manifest's `## Version` is the only other
+-- place the number appears, because ESO exposes no API to read it back at
+-- runtime -- keep the two in step when releasing.
 BureauOfMaterialWorth = {
     name = ADDON_NAME,
     savedVariablesName = SAVED_VARIABLES_NAME,
-    version = "3.6.163246",
-    debugMode = 1,  -- 0=off, 1=errors, 2=warnings, 3=info, 4=verbose
+    version = "4.0.045741",
+    releaseDate = "25.07.2026",
+    -- 0=off, 1=errors, 2=warnings, 3=info, 4=verbose. Ships at 0: a release
+    -- build must stay silent in chat until the user opts into diagnostics via
+    -- the settings panel or /bmw debug.
+    debugMode = 0,
 }
 
 -- Local alias to the addon's global table. This file is the one that creates
@@ -142,6 +153,15 @@ private.ChatError = ChatError
 private.GetLocalizedBoolean = GetLocalizedBoolean
 private.GetDebugLevelName = GetDebugLevelName
 
+-- A "classic" inventory stack is 200 identical items. The craft bag itself has
+-- no such limit (one material = one unbounded virtual slot), but every figure
+-- that talks about moving materials into the backpack does: the stack count in
+-- the panel's subtitle, the free-capacity estimate, and the withdraw dialog's
+-- slot arithmetic. Previously Valuation and WithdrawDialog each declared their
+-- own `local STACK_SIZE = 200`, so a future ZOS change would have to be applied
+-- twice; both now bind this one value.
+private.STACK_SIZE = 200
+
 -- Guild-store selling fees: the single source of truth for the "net if sold"
 -- figures shown across the addon (the grand-total hover, the detail window's
 -- category/row tooltips and footer summary). Two parts, confirmed against the
@@ -166,9 +186,17 @@ end
 -- House palette + gold-formatting, shared by every presentation module (Window,
 -- DetailWindow, WithdrawDialog, Settings) so a color/format change is a one-line
 -- edit here instead of four. Kept in `private` rather than each module's locals.
+-- The eight tones are the whole palette. private.UI (UI.lua) derives its control
+-- tints from exactly these strings, so a label's |c code and the fill behind it
+-- can no longer describe two different colours.
 private.COLOR_ACCENT = "6FCB9F"  -- brand green: titles / grand total
 private.COLOR_MUTED  = "8C8A82"  -- dim grey: subtitle / footer / secondary
 private.COLOR_NAME   = "DBD9D0"  -- near-white: category / material names
+-- One step down from COLOR_NAME, for prose that explains rather than states: the
+-- body of a tooltip under its title, a hint under a control. It has to be quieter
+-- than a figure the player is reading, but is too long to sit at COLOR_MUTED and
+-- stay comfortable.
+private.COLOR_SOFT   = "C7C4B8"  -- soft stone: explanatory body text
 private.COLOR_GOLD   = "F4D03F"  -- soft gold: gold figures
 private.COLOR_WARN   = "D0905E"  -- amber: "missing price" hint
 private.COLOR_GAIN    = "8FCB9F"  -- green: positive delta / price change
@@ -263,17 +291,27 @@ local function OnAddonLoaded(event, addonName)
     EVENT_MANAGER:UnregisterForEvent(addon.name, EVENT_ADD_ON_LOADED)
     LogInfo(SI_BMW_LOG_ONADDONLOADED_LOADING, addon.version)
 
+    -- SavedVariables and the settings panel come first, deliberately BEFORE the
+    -- LibPrice check below. Neither depends on a price source, and registering
+    -- them unconditionally is what keeps the addon configurable on a broken
+    -- install: the previous order bailed out on a missing LibPrice before the
+    -- panel and /bmwsettings existed, so a user who wanted to change the debug
+    -- level or read the panel's own "LibPrice is missing" explanation had no way
+    -- in. The valuation engine and the window still require LibPrice.
+    savedVars = GetSettingsModule().InitializeSavedVariables()
+    private.savedVars = savedVars
+
+    addon.RegisterSettingsPanel()
+
     -- LibPrice is the core dependency: without a price source there is nothing
     -- to sum. It is declared as a hard DependsOn, but guard anyway so a broken
-    -- install fails loudly in chat instead of erroring deep in the scan.
+    -- install fails loudly in chat instead of erroring deep in the scan. We stop
+    -- before building the window/valuation, leaving the settings panel above as
+    -- the one working surface.
     if not LibPrice then
         ChatError(SI_BMW_MSG_LIBPRICE_MISSING)
         return
     end
-
-    -- Initialize the settings module and SavedVariables
-    savedVars = GetSettingsModule().InitializeSavedVariables()
-    private.savedVars = savedVars
 
     -- Build the window and the valuation engine now that SavedVariables exist.
     if GetWindowModule() then
@@ -292,7 +330,7 @@ local function OnAddonLoaded(event, addonName)
     -- Visibility drives all scan work: register the craft-bag fragment callback.
     CRAFT_BAG_FRAGMENT:RegisterCallback("StateChange", OnCraftBagFragmentStateChange)
 
-    addon.RegisterSettingsPanel()
+    -- The settings panel is already registered above, before the LibPrice guard.
 
     LogInfo(SI_BMW_LOG_ADDON_LOADED)
 end

@@ -1,15 +1,19 @@
 ## Title: |c6FCB9FBureau|r of Material Worth
-## Version: 3.6.163246
-## AddOnVersion: 36
+## Version: 4.0.045741
+## AddOnVersion: 40
 ## APIVersion: 101050
 ## Author: |c6FCB9Fmeshlg|r @ArtieFox
 ## Description: Know what your Craft Bag is worth. Sums its market value (via LibPrice) with a per-profession breakdown and a clickable, scrollable material list.
 ## SavedVariables: BureauOfMaterialWorth_SavedVariables
 ## DependsOn: LibAddonMenu-2.0>=43 LibPrice>=70530
 
-; ReleaseDate: 24.07.2026 | 3.6.163246
-; !!! On release, update Version, ReleaseDate, BureauOfMaterialWorth.lua, and the
-; localized SI_BMW_WINDOW_VERSION_DATE label together.
+; ReleaseDate: 25.07.2026 | 4.0.045741
+; !!! On release, update exactly two places: the ## Version / ## AddOnVersion
+; lines above, and the `version` / `releaseDate` fields in
+; BureauOfMaterialWorth.lua. The footer label, the settings dashboard and the
+; chat banner all format those two fields at runtime, so the localized
+; SI_BMW_WINDOW_VERSION_DATE strings no longer carry a number and must NOT be
+; edited for a release (they hold only the wording and two %s placeholders).
 ; ---------------------------------------------------------------------------
 
 
@@ -22,6 +26,11 @@ Localization/$(language).lua
 ; The main addon files are loaded in the following order, with later files overriding earlier ones. This allows for a clear separation of concerns and modularity in the codebase.
 BureauOfMaterialWorth.lua
 Valuation.lua
+; UI.lua holds the shared visual language (palette-derived tints, type scale,
+; spacing, chrome builders, tooltip voice). It reads the core's palette, so it
+; loads after it -- and before every window file, which all style themselves
+; exclusively through it.
+UI.lua
 Window.lua
 DetailWindow.xml
 DetailWindow.lua

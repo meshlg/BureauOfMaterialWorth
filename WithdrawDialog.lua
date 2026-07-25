@@ -26,8 +26,10 @@ local BAG_BACKPACK = BAG_BACKPACK
 -- A classic stack is 200 items. Used only for the preset captions ("1 stack" =
 -- 200) and the queue's conservative slots-needed estimate; the move engine does
 -- NOT chunk by this -- one RequestMoveItem moves the full quantity and the game
--- spreads any overflow across slots itself. Mirrors Valuation.lua's STACK_SIZE.
-local STACK_SIZE = 200
+-- spreads any overflow across slots itself. Declared once in the core as
+-- private.STACK_SIZE (Valuation binds the same value), so the stack size cannot
+-- drift between the queue estimate here and the stack count in the panel.
+local STACK_SIZE = private.STACK_SIZE
 
 -- Quantity presets offered as buttons. Raw item counts, ascending; the captions
 -- for the >= one-stack entries are derived ("1 stack", "10 stacks", ...) so the
@@ -41,16 +43,23 @@ local PRESETS = { 1, 10, 100, 200, 400, 2000, 4000 }
 -- always raise it (up to the available max) or type an exact value.
 --
 -- Keyed by ITEM_FUNCTIONAL_QUALITY_* (what Valuation passes as `quality`, from
--- GetItemLinkFunctionalQuality). All tiers start at 200 Resolved
--- through DefaultQuantityForQuality so an unknown/nil quality is safe.
+-- GetItemLinkFunctionalQuality). Every ordinary tier proposes one full stack;
+-- legendary (gold) mats -- kuta, rosin, chromium plating and friends -- propose a
+-- single item, because they are the ones worth thousands each.
+--
+-- DEFAULT_QUANTITY_FALLBACK is deliberately the cautious end of that range, not
+-- a stack: it covers a nil quality and any tier a future client adds, and
+-- proposing too little is a harmless extra click while proposing too much can
+-- dump a fortune into the backpack. Resolved through DefaultQuantityForQuality
+-- so an unknown/nil quality is always safe.
 local DEFAULT_QUANTITY_FALLBACK = 1
 local DEFAULT_QUANTITY_BY_QUALITY = {
-    [ITEM_FUNCTIONAL_QUALITY_TRASH]     = 200, -- grey
-    [ITEM_FUNCTIONAL_QUALITY_NORMAL]    = 200, -- white
-    [ITEM_FUNCTIONAL_QUALITY_MAGIC]     = 200, -- green
-    [ITEM_FUNCTIONAL_QUALITY_ARCANE]    = 200, -- blue
-    [ITEM_FUNCTIONAL_QUALITY_ARTIFACT]  = 200, -- purple
-    [ITEM_FUNCTIONAL_QUALITY_LEGENDARY] = 1, -- gold
+    [ITEM_FUNCTIONAL_QUALITY_TRASH]     = STACK_SIZE, -- grey
+    [ITEM_FUNCTIONAL_QUALITY_NORMAL]    = STACK_SIZE, -- white
+    [ITEM_FUNCTIONAL_QUALITY_MAGIC]     = STACK_SIZE, -- green
+    [ITEM_FUNCTIONAL_QUALITY_ARCANE]    = STACK_SIZE, -- blue
+    [ITEM_FUNCTIONAL_QUALITY_ARTIFACT]  = STACK_SIZE, -- purple
+    [ITEM_FUNCTIONAL_QUALITY_LEGENDARY] = 1,          -- gold: precious, grab one
 }
 
 local function DefaultQuantityForQuality(quality)
@@ -64,6 +73,14 @@ end
 local COLOR_ACCENT = private.COLOR_ACCENT
 local COLOR_MUTED  = private.COLOR_MUTED
 local COLOR_WARN   = private.COLOR_WARN
+
+-- Shared visual language (UI.lua). This window's chrome, type scale, spacing,
+-- dividers and progress meters all come from there, so the withdraw window is
+-- the same surface as the summary panel and the material table rather than a
+-- third near-black with its own fonts.
+local UI = private.UI
+local FONT = UI.FONT
+local METRIC = UI.METRIC
 
 local Colorize = private.Colorize
 local FormatGold = private.FormatGold
@@ -87,15 +104,25 @@ end
 -- Layout
 -- ---------------------------------------------------------------------------
 local POPUP_WIDTH   = 520
-local PADDING       = 16
+-- A free-floating window, so it takes the wider step of the shared spacing scale
+-- (the narrow summary panel takes METRIC.PADDING), and its inter-block air and
+-- button gutters come from the same scale -- the three windows breathe alike.
+local PADDING       = METRIC.PADDING_WIDE
 local TITLE_HEIGHT  = 30
+local ICON_SIZE     = 32       -- the material icon beside the title
+local CLOSE_SIZE    = 30       -- ZO_CloseButton's own footprint, reserved for it
 local LINE          = 24       -- vertical rhythm for info lines
-local SECTION_GAP   = 12       -- space between blocks
+local SECTION_GAP   = METRIC.GAP_WIDE   -- space between blocks
+local CONTROL_GAP   = METRIC.GAP        -- space between adjacent controls
 local BUTTON_HEIGHT = 30
 local PROGRESS_HEIGHT = 16
-local BG_ALPHA      = 0.94
 local QUEUE_ROW_HEIGHT = 30
 local QUEUE_MAX_ROWS   = 6
+
+-- The queue row template's text columns, by name suffix (see DetailWindow.xml).
+-- The markup declares geometry only; this is what the row setup hands to
+-- UI.ApplyRowFonts so the queue reads at the same size as the material table.
+local QUEUE_ROW_COLUMNS = { "Name", "Value" }
 
 -- Caption for a preset button: a plain number under one stack, otherwise an
 -- "N stack(s)" label so 200 reads as "1 stack" and 4000 as "20 stacks".
@@ -132,8 +159,11 @@ local function FindFreeBackpackSlot(reserved)
             return slotIndex
         end
         slotIndex = ZO_GetNextBagSlotIndex(BAG_BACKPACK, slotIndex)
-        -- Skip ahead to the next genuinely empty slot.
-        while slotIndex and GetSlotStackSize(BAG_BACKPACK, slotIndex) ~= 0 do
+        -- Skip ahead to the next genuinely empty slot. GetSlotStackSize returns
+        -- nil (not 0) for an empty slot on some paths, so coerce before the
+        -- comparison -- a bare `~= 0` treats nil as occupied and would walk
+        -- straight past every free slot, making the run report "no room".
+        while slotIndex and (GetSlotStackSize(BAG_BACKPACK, slotIndex) or 0) ~= 0 do
             slotIndex = ZO_GetNextBagSlotIndex(BAG_BACKPACK, slotIndex)
         end
     end
@@ -182,7 +212,11 @@ local MOVE_EVENT_NAME = addon.name .. "_WithdrawMoveWatch"
 -- Safety timeout: if the expected items never fully arrive (e.g. a move was
 -- partially rejected), end the run anyway so the UI never stays "in progress"
 -- forever. Re-armed on every arrival; fires when arrivals go quiet.
-local WATCH_TIMEOUT_MS = 2000
+-- Deliberately generous: this is a stall backstop, not a deadline. The old 2s
+-- budget could expire before the server acknowledged the very first move on a
+-- laggy connection or a large multi-job queue, which ended the run at 0 moved
+-- and reported nothing withdrawn while the items were still on their way.
+local WATCH_TIMEOUT_MS = 8000
 local WATCH_TIMER_NAME = addon.name .. "_WithdrawWatchTimeout"
 
 local isWithdrawing = false
@@ -210,10 +244,18 @@ local function StopWatching()
 end
 
 local function FinishRun()
+    -- Idempotent: the quiet-timeout and the final arrival can both land in the
+    -- same frame, and OnCraftBagHidden/Cancel may also call in. Without this
+    -- guard the finish callback could fire twice and post two chat reports.
+    if not isWithdrawing then
+        StopWatching()
+        return
+    end
+
     StopWatching()
     isWithdrawing = false
     engineWatchItemIds = nil
-    local moved, total, requested = engineMoved, engineTotal, engineRequested
+    local moved, total, requested = mathmin(engineMoved, engineTotal), engineTotal, engineRequested
     local onFinish = engineOnFinish
     engineOnProgress = nil
     engineOnFinish = nil
@@ -231,14 +273,29 @@ local function OnBackpackSlotUpdate(eventCode, bagId, slotIndex, isNewItem, soun
     if not engineWatchItemIds then
         return
     end
-    local itemId = GetItemId(BAG_BACKPACK, slotIndex)
-    if not engineWatchItemIds[itemId] then
+    -- Only ordinary inventory movement counts. Without this, a reason-tagged
+    -- update (durability/charge changes and similar) could be read as an arrival.
+    if updateReason ~= nil and INVENTORY_UPDATE_REASON_DEFAULT ~= nil
+        and updateReason ~= INVENTORY_UPDATE_REASON_DEFAULT then
         return
     end
 
-    engineMoved = engineMoved + stackCountChange
+    local itemId = GetItemId(BAG_BACKPACK, slotIndex)
+    local outstanding = engineWatchItemIds[itemId]
+    if not outstanding or outstanding <= 0 then
+        return
+    end
+
+    -- Credit at most what this run still expects for that itemId. The handler
+    -- cannot distinguish our withdrawal from any other gain of the same material
+    -- (loot, a craft, a mail attachment, a purchase) that lands mid-run, so
+    -- bounding the credit per item keeps a coincidental arrival from completing
+    -- the run early and reporting a quantity that was never withdrawn.
+    local credit = mathmin(stackCountChange, outstanding)
+    engineWatchItemIds[itemId] = outstanding - credit
+    engineMoved = mathmin(engineMoved + credit, engineTotal)
     if engineOnProgress then
-        engineOnProgress(mathmin(engineMoved, engineTotal), engineTotal)
+        engineOnProgress(engineMoved, engineTotal)
     end
 
     if engineMoved >= engineTotal then
@@ -277,6 +334,10 @@ local function IssueJob(job, reserved, watchItemIds)
     -- room. Any overflow still needs distinct empty slots reserved up front.
     local destSlot = FindPartialBackpackSlot(job.itemId, reserved)
     local partialRoom = 0
+    -- Remember the partial slot separately from destSlot: destSlot is reassigned
+    -- to a claimed empty slot when no partial exists, so it cannot be used to
+    -- decide what the rollback below has to release.
+    local partialSlot = destSlot
     if destSlot then
         partialRoom = STACK_SIZE - (GetSlotStackSize(BAG_BACKPACK, destSlot) or STACK_SIZE)
         reserved[destSlot] = true
@@ -299,8 +360,12 @@ local function IssueJob(job, reserved, watchItemIds)
     -- collision we are guarding against. Release the partial claim so a smaller
     -- later job can still use those slots, and skip this one (items stay in the bag).
     if not destSlot or #claimed < slotsNeeded then
-        if partialRoom > 0 then
-            reserved[destSlot] = nil
+        -- Release the partial stack whenever one was claimed. The old test keyed
+        -- off `partialRoom > 0` and released `reserved[destSlot]`, so a claimed
+        -- partial slot with zero room stayed reserved for the rest of the run and
+        -- silently starved every later job of that slot.
+        if partialSlot then
+            reserved[partialSlot] = nil
         end
         for c = 1, #claimed do
             reserved[claimed[c]] = nil
@@ -308,7 +373,10 @@ local function IssueJob(job, reserved, watchItemIds)
         return 0
     end
 
-    watchItemIds[job.itemId] = true
+    -- Accumulate the outstanding quantity per material (several jobs can share an
+    -- itemId across craft-bag slots) so the arrival handler can credit precisely
+    -- what this run asked for and ignore anything beyond it.
+    watchItemIds[job.itemId] = (watchItemIds[job.itemId] or 0) + moveQty
     SecureRequestMoveItem(BAG, job.slotIndex, BAG_BACKPACK, destSlot, moveQty)
     return moveQty
 end
@@ -455,7 +523,7 @@ UpdatePopupMode = function()
         popupBatchSummaryLabel:SetText(Colorize(COLOR_MUTED,
             stringformat(GetString(SI_BMW_WITHDRAW_BATCH_SUMMARY), #queue,
                 ZO_LocalizeDecimalNumber(GetQueueItemCount()))))
-        popupProgressBar:SetHidden(true)
+        UI.ShowMeter(popupProgressBar, false)
         popupProgressLabel:SetHidden(true)
     else
         RenderSelectedHeader()
@@ -538,9 +606,9 @@ end
 local function OnPopupFinish(moved, total, requested)
     -- Protected moves cannot be revoked after the click. Keep the final observed
     -- result visible instead of implying that a Hide action cancelled the run.
-    popupProgressBar:SetHidden(true)
+    UI.ShowMeter(popupProgressBar, false)
     popupProgressLabel:SetText(Colorize(COLOR_MUTED,
-        stringformat(GetString(SI_BMW_WITHDRAW_RESULT), moved or 0, total or 0)))
+        stringformat(GetString(SI_BMW_WITHDRAW_RESULT_LABEL), moved or 0, total or 0)))
     popupProgressLabel:SetHidden(false)
     for i = 1, #popupPresetButtons do
         popupPresetButtons[i]:SetEnabled(true)
@@ -551,9 +619,15 @@ local function OnPopupFinish(moved, total, requested)
 
     ComputeMax()
     SetRequested(mathmin(curRequested, curMax))
-    local goldValue = curPriced and curUnitPrice and FormatGold(curUnitPrice * moved)
+
+    -- Value what actually arrived, never more than was asked for: `moved` is
+    -- derived from inventory events, so clamping keeps a coincidental arrival of
+    -- the same material from inflating the reported gold.
+    local movedQty = mathmin(moved or 0, total or 0)
+    local goldValue = (curPriced and curUnitPrice)
+        and FormatGold(curUnitPrice * movedQty)
         or GetString(SI_BMW_MSG_VALUE_UNKNOWN)
-    AnnounceWithdrawResult(moved or 0, requested or total or 0, goldValue)
+    AnnounceWithdrawResult(movedQty, requested or total or 0, goldValue)
 end
 
 local function OnPopupProgress(moved, total)
@@ -580,7 +654,7 @@ function WithdrawDialog.Confirm()
     popupEdit:SetEditEnabled(false)
     popupConfirm:SetEnabled(false)
     popupAddToQueue:SetEnabled(false)
-    popupProgressBar:SetHidden(false)
+    UI.ShowMeter(popupProgressBar, true)
     popupProgressBar:SetValue(0)
     popupProgressLabel:SetHidden(false)
     popupCancel:SetText(GetString(SI_BMW_WITHDRAW_HIDE))
@@ -600,6 +674,15 @@ function WithdrawDialog.CancelPopup()
     -- be cancelled. Hiding leaves the watcher active so the final result remains
     -- accurate and the engine cleans itself up on completion.
     HidePopup()
+end
+
+-- Height of the header wash: the identity block this window opens with (the
+-- material icon and the title beside it) plus its top padding, closed by a little
+-- air beneath so the accent underline does not crowd the text. The icon is the
+-- taller of the two, so it -- not the title row -- sets the floor. Derived rather
+-- than a constant, so a change to either carries the band with it.
+local function HeaderBandHeight()
+    return PADDING + mathmax(TITLE_HEIGHT, ICON_SIZE) + METRIC.BAND_PAD
 end
 
 -- Build the singleton popup once. Frame is code-built like the other windows.
@@ -631,24 +714,35 @@ local function InitializePopup()
 
     local backdrop = WINDOW_MANAGER:CreateControl(addon.name .. "_WithdrawBackdrop", popup, CT_BACKDROP)
     backdrop:SetAnchorFill(popup)
-    backdrop:SetEdgeTexture("", 1, 1, 1)
-    backdrop:SetInsets(2, 2, -2, -2)
-    backdrop:SetCenterColor(0.05, 0.05, 0.06, BG_ALPHA)
-    backdrop:SetEdgeColor(0.42, 0.40, 0.34, 0.9)
+    -- One call for the whole shell: ground, border, insets and opacity from the
+    -- shared chrome. The one override is the more solid alpha, because this is the
+    -- window that takes a typed quantity and the digits must not compete with
+    -- whatever is behind it.
+    UI.ApplyPanelChrome(backdrop, { alpha = UI.CHROME.BG_ALPHA_SOLID })
+
+    -- The shared letterhead the other two windows open with: a faint accent wash
+    -- the full width of the window, closed by an accent underline. Created before
+    -- the icon and title so it sits behind them, and spanning the full width (not
+    -- the inner width) so it reads as a band rather than a floating rectangle.
+    local headerBand = UI.CreateHeaderBand(addon.name .. "_WithdrawHeaderBand", popup,
+        POPUP_WIDTH, HeaderBandHeight())
+    headerBand:SetAnchor(TOPLEFT, popup, TOPLEFT, 0, 0)
 
     popupIcon = WINDOW_MANAGER:CreateControl(addon.name .. "_WithdrawIcon", popup, CT_TEXTURE)
-    popupIcon:SetDimensions(32, 32)
+    popupIcon:SetDimensions(ICON_SIZE, ICON_SIZE)
     popupIcon:SetAnchor(TOPLEFT, popup, TOPLEFT, PADDING, PADDING)
 
     popupTitle = WINDOW_MANAGER:CreateControl(addon.name .. "_WithdrawTitle", popup, CT_LABEL)
-    popupTitle:SetFont("ZoFontWinH4")
+    -- The section-heading step, not the title step: the title shares its row with
+    -- the material icon and the close button, and the larger face would crowd them.
+    popupTitle:SetFont(FONT.heading)
     popupTitle:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
     popupTitle:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     popupTitle:SetMaxLineCount(1)
     popupTitle:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
-    popupTitle:SetAnchor(LEFT, popupIcon, RIGHT, 10, 0)
+    popupTitle:SetAnchor(LEFT, popupIcon, RIGHT, CONTROL_GAP, 0)
     -- Leave room on the right for the close button (icon + title + close).
-    popupTitle:SetWidth(POPUP_WIDTH - PADDING * 2 - 32 - 10 - 30)
+    popupTitle:SetWidth(POPUP_WIDTH - PADDING * 2 - ICON_SIZE - CONTROL_GAP - CLOSE_SIZE)
 
     local closeButton = WINDOW_MANAGER:CreateControlFromVirtual(
         addon.name .. "_WithdrawClose", popup, "ZO_CloseButton")
@@ -659,28 +753,31 @@ local function InitializePopup()
 
     popupBatchSummaryLabel = WINDOW_MANAGER:CreateControl(
         addon.name .. "_WithdrawBatchSummary", popup, CT_LABEL)
-    popupBatchSummaryLabel:SetFont("ZoFontGame")
+    popupBatchSummaryLabel:SetFont(FONT.body)
     popupBatchSummaryLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     popupBatchSummaryLabel:SetDimensions(innerWidth, LINE)
-    popupBatchSummaryLabel:SetAnchor(TOPLEFT, popup, TOPLEFT, PADDING, PADDING + TITLE_HEIGHT)
+    -- In batch mode this line replaces the whole single-material block, so it sits
+    -- directly beneath the header band -- not under the raw title row, which the
+    -- band now extends past.
+    popupBatchSummaryLabel:SetAnchor(TOPLEFT, popup, TOPLEFT, PADDING, HeaderBandHeight())
     popupBatchSummaryLabel:SetHidden(true)
 
     local y = PADDING + TITLE_HEIGHT + SECTION_GAP
 
     popupFreeLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_WithdrawFree", popup, CT_LABEL)
-    popupFreeLabel:SetFont("ZoFontGame")
+    popupFreeLabel:SetFont(FONT.body)
     popupFreeLabel:SetWidth(innerWidth)
     popupFreeLabel:SetAnchor(TOPLEFT, popup, TOPLEFT, PADDING, y)
     y = y + LINE
 
     popupMaxLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_WithdrawMax", popup, CT_LABEL)
-    popupMaxLabel:SetFont("ZoFontGame")
+    popupMaxLabel:SetFont(FONT.body)
     popupMaxLabel:SetWidth(innerWidth)
     popupMaxLabel:SetAnchor(TOPLEFT, popup, TOPLEFT, PADDING, y)
     y = y + LINE
 
     popupValueLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_WithdrawValue", popup, CT_LABEL)
-    popupValueLabel:SetFont("ZoFontGame")
+    popupValueLabel:SetFont(FONT.body)
     popupValueLabel:SetWidth(innerWidth)
     popupValueLabel:SetAnchor(TOPLEFT, popup, TOPLEFT, PADDING, y)
     y = y + LINE + SECTION_GAP
@@ -688,7 +785,7 @@ local function InitializePopup()
     -- Preset buttons, wrapped across rows so they fit the popup width. The button
     -- width is derived from how many fit per row so they span the full width
     -- evenly with no overflow.
-    local btnGap = 8
+    local btnGap = CONTROL_GAP
     local presetsPerRow = 4
     local btnWidth = mathfloor((innerWidth - btnGap * (presetsPerRow - 1)) / presetsPerRow)
     for i = 1, #PRESETS do
@@ -709,7 +806,7 @@ local function InitializePopup()
 
     -- Quantity row: label on the left, editbox to its right.
     popupQtyLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_WithdrawQtyLabel", popup, CT_LABEL)
-    popupQtyLabel:SetFont("ZoFontGame")
+    popupQtyLabel:SetFont(FONT.body)
     popupQtyLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     popupQtyLabel:SetDimensions(120, BUTTON_HEIGHT)
     popupQtyLabel:SetAnchor(TOPLEFT, popup, TOPLEFT, PADDING, y)
@@ -721,7 +818,7 @@ local function InitializePopup()
     -- ZO_DefaultBackdrop ships with its own anchors; clear them before ours so
     -- this does not become a rejected third anchor.
     popupEditBg:ClearAnchors()
-    popupEditBg:SetAnchor(LEFT, popupQtyLabel, RIGHT, 8, 0)
+    popupEditBg:SetAnchor(LEFT, popupQtyLabel, RIGHT, CONTROL_GAP, 0)
     -- Clicking anywhere on the backdrop (incl. its padding) focuses the editbox,
     -- so the whole field is the hit target, not just the glyphs. Without this the
     -- box reads as "locked" because a custom (non-dialog) editbox does not grab
@@ -736,7 +833,7 @@ local function InitializePopup()
     popupEdit = WINDOW_MANAGER:CreateControl(addon.name .. "_WithdrawEdit", popupEditBg, CT_EDITBOX)
     popupEdit:SetAnchor(TOPLEFT, popupEditBg, TOPLEFT, 8, 2)
     popupEdit:SetAnchor(BOTTOMRIGHT, popupEditBg, BOTTOMRIGHT, -8, -2)
-    popupEdit:SetFont("ZoFontGame")
+    popupEdit:SetFont(FONT.body)
     popupEdit:SetMaxInputChars(7)
     popupEdit:SetMouseEnabled(true)
     popupEdit:SetTextType(TEXT_TYPE_NUMERIC)
@@ -766,11 +863,15 @@ local function InitializePopup()
     popupProgressBar:SetAnchor(TOPLEFT, popup, TOPLEFT, PADDING, y)
     popupProgressBar:SetMinMax(0, 1)
     popupProgressBar:SetValue(0)
-    popupProgressBar:SetColor(0.44, 0.80, 0.62, 1)
-    popupProgressBar:SetHidden(true)
+    UI.ShowMeter(popupProgressBar, false)
+    -- The shared meter: an accent bar over a faint track, so a run that has barely
+    -- started still shows how much is left rather than a gap in the layout. The
+    -- accent tint comes from the palette instead of a hand-written triple that had
+    -- drifted a shade off it.
+    UI.ApplyMeter(popupProgressBar, addon.name .. "_WithdrawProgressTrack")
 
     popupProgressLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_WithdrawProgressText", popup, CT_LABEL)
-    popupProgressLabel:SetFont("ZoFontGameSmall")
+    popupProgressLabel:SetFont(FONT.small)
     popupProgressLabel:SetHorizontalAlignment(TEXT_ALIGN_CENTER)
     popupProgressLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     popupProgressLabel:SetDimensions(innerWidth, PROGRESS_HEIGHT)
@@ -808,7 +909,10 @@ local function InitializePopup()
     popupCancel:SetHandler("OnClicked", function() WithdrawDialog.CancelPopup() end)
 
     popupBaseHeight = y + BUTTON_HEIGHT + PADDING
-    popupBatchBaseHeight = PADDING + TITLE_HEIGHT + LINE + SECTION_GAP
+    -- Batch mode shows only the header band and the one summary line beneath it, so
+    -- the queue starts right below that pair. Derived from the band, so it follows
+    -- the band's height instead of re-adding the title row by hand.
+    popupBatchBaseHeight = HeaderBandHeight() + LINE + SECTION_GAP
     popup:SetHeight(popupBaseHeight)
 end
 
@@ -822,7 +926,7 @@ function WithdrawDialog.Open(materialData)
         return  -- don't swap material mid-run
     end
 
-    popupProgressBar:SetHidden(true)
+    UI.ShowMeter(popupProgressBar, false)
     popupProgressLabel:SetHidden(true)
     popupCancel:SetText(GetString(SI_BMW_WITHDRAW_CANCEL))
 
@@ -1020,7 +1124,7 @@ end
 local queueRunGoldValue = nil
 
 local function OnQueueFinish(moved, total, requested)
-    queueProgressBar:SetHidden(true)
+    UI.ShowMeter(queueProgressBar, false)
     -- Drop exhausted entries and ones whose virtual slot was reused by a
     -- different material; keep valid partials with their quantity clamped.
     NormalizeQueue()
@@ -1061,7 +1165,7 @@ function WithdrawDialog.WithdrawAll()
         return
     end
 
-    queueProgressBar:SetHidden(false)
+    UI.ShowMeter(queueProgressBar, true)
     queueProgressBar:SetValue(0)
     queueWithdrawAll:SetEnabled(false)
     queueClear:SetEnabled(false)
@@ -1080,6 +1184,10 @@ end
 -- data, since ZO_ScrollList reuses a small pool of rows across many entries.
 local function SetupQueueRow(rowControl, data)
     rowControl.bmwQueueData = data
+
+    -- The template declares the columns' geometry; their face comes from the shared
+    -- type scale. No-ops after the first time this control is used.
+    UI.ApplyRowFonts(rowControl, QUEUE_ROW_COLUMNS)
 
     rowControl:GetNamedChild("Icon"):SetTexture(data.icon)
 
@@ -1154,27 +1262,27 @@ local function InitializeQueueSection()
     queueSection:SetAnchor(TOPLEFT, popup, TOPLEFT, PADDING, popupBaseHeight + SECTION_GAP)
     queueSection:SetHidden(true)
 
-    local divider = WINDOW_MANAGER:CreateControl(addon.name .. "_QueueDivider", queueSection, CT_TEXTURE)
-    divider:SetTexture("EsoUI/Art/Miscellaneous/horizontalDivider.dds")
-    divider:SetDimensions(innerWidth, 4)
-    divider:SetColor(1, 1, 1, 0.4)
+    -- Structural weight: this rule is what separates the batch from the window's
+    -- single-material half, the same job the rule under the material table's column
+    -- headers does.
+    local divider = UI.CreateRule(addon.name .. "_QueueDivider", queueSection, innerWidth, "strong")
     divider:SetAnchor(TOPLEFT, queueSection, TOPLEFT, 0, 0)
 
     local title = WINDOW_MANAGER:CreateControl(addon.name .. "_QueueTitle", queueSection, CT_LABEL)
-    title:SetFont("ZoFontWinH4")
+    title:SetFont(FONT.heading)
     title:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     title:SetDimensions(innerWidth, TITLE_HEIGHT)
     title:SetAnchor(TOPLEFT, queueSection, TOPLEFT, 0, SECTION_GAP)
     title:SetText(Colorize(COLOR_ACCENT, GetString(SI_BMW_QUEUE_TITLE)))
 
     queueSummaryLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_QueueSummary", queueSection, CT_LABEL)
-    queueSummaryLabel:SetFont("ZoFontGame")
+    queueSummaryLabel:SetFont(FONT.body)
     queueSummaryLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     queueSummaryLabel:SetDimensions(innerWidth, LINE)
     queueSummaryLabel:SetAnchor(TOPLEFT, title, BOTTOMLEFT, 0, 0)
 
     queueStatusLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_QueueStatus", queueSection, CT_LABEL)
-    queueStatusLabel:SetFont("ZoFontGameSmall")
+    queueStatusLabel:SetFont(FONT.small)
     queueStatusLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     queueStatusLabel:SetDimensions(innerWidth, LINE)
     queueStatusLabel:SetAnchor(TOPLEFT, queueSummaryLabel, BOTTOMLEFT, 0, 0)
@@ -1189,7 +1297,7 @@ local function InitializeQueueSection()
         "BureauOfMaterialWorth_WithdrawQueueRow", QUEUE_ROW_HEIGHT, SetupQueueRow)
 
     queueEmptyLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_QueueEmpty", queueSection, CT_LABEL)
-    queueEmptyLabel:SetFont("ZoFontGame")
+    queueEmptyLabel:SetFont(FONT.body)
     queueEmptyLabel:SetHorizontalAlignment(TEXT_ALIGN_CENTER)
     queueEmptyLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     queueEmptyLabel:SetDimensions(innerWidth, QUEUE_ROW_HEIGHT * 2)
@@ -1198,10 +1306,11 @@ local function InitializeQueueSection()
 
     local footerY = listY + QUEUE_ROW_HEIGHT * QUEUE_MAX_ROWS + SECTION_GAP
 
-    local footerDivider = WINDOW_MANAGER:CreateControl(addon.name .. "_QueueFooterDivider", queueSection, CT_TEXTURE)
-    footerDivider:SetTexture("EsoUI/Art/Miscellaneous/horizontalDivider.dds")
-    footerDivider:SetDimensions(innerWidth, 4)
-    footerDivider:SetColor(1, 1, 1, 0.4)
+    -- Inside the batch block, so the soft weight: it closes the list off from its
+    -- own footer rather than separating two parts of the window, exactly as the rule
+    -- above the material table's total does.
+    local footerDivider = UI.CreateRule(addon.name .. "_QueueFooterDivider", queueSection,
+        innerWidth, "soft")
     footerDivider:SetAnchor(TOPLEFT, queueSection, TOPLEFT, 0, footerY)
     footerY = footerY + SECTION_GAP
 
@@ -1210,8 +1319,10 @@ local function InitializeQueueSection()
     queueProgressBar:SetAnchor(TOPLEFT, queueSection, TOPLEFT, 0, footerY)
     queueProgressBar:SetMinMax(0, 1)
     queueProgressBar:SetValue(0)
-    queueProgressBar:SetColor(0.44, 0.80, 0.62, 1)
-    queueProgressBar:SetHidden(true)
+    UI.ShowMeter(queueProgressBar, false)
+    -- Same meter as the single-material run above, so a batch run and a single
+    -- withdrawal report progress in one visual language.
+    UI.ApplyMeter(queueProgressBar, addon.name .. "_QueueProgressTrack")
     footerY = footerY + PROGRESS_HEIGHT + SECTION_GAP
 
     queueWithdrawAll = WINDOW_MANAGER:CreateControlFromVirtual(

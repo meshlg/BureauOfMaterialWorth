@@ -21,6 +21,14 @@ local COLOR_WARN     = private.COLOR_WARN
 local COLOR_GAIN     = private.COLOR_GAIN
 local COLOR_LOSS     = private.COLOR_LOSS
 
+-- Shared visual language (UI.lua). Every font, control tint, divider weight and
+-- tooltip line in this file comes from here, so the summary panel cannot drift
+-- away from the detail and withdraw windows the way it had.
+local UI = private.UI
+local FONT = UI.FONT
+local METRIC = UI.METRIC
+
+
 -- Layout constants
 -- ---------------------------------------------------------------------------
 -- A slim panel anchored beside the craft bag. It sizes itself to its content:
@@ -36,7 +44,7 @@ local DEFAULT_WINDOW_WIDTH = 400
 local MIN_WINDOW_WIDTH = 400
 local MAX_WINDOW_WIDTH = 600
 local WINDOW_WIDTH_STEP = 10
-local PADDING        = 12
+local PADDING        = METRIC.PADDING
 local ADDON_NAME_HEIGHT = 22
 local PROFILE_HEIGHT = 16
 local TOTAL_TO_PROFILE_GAP = 5
@@ -53,10 +61,15 @@ local VERSION_DATE_HEIGHT = FOOTER_LINE
 local VERSION_TO_TOTAL_GAP = 8
 local HEADER_TO_DIVIDER_GAP = 1
 local FOOTER_ALPHA   = 0.82
+local HEADER_BAND_PAD = METRIC.BAND_PAD
 local LEADER_MARKER_WIDTH = 3
-local LEADER_MARKER_COLOR = { 0.44, 0.80, 0.62, 0.95 }
-local BG_ALPHA       = 0.82
-local EDGE_ALPHA     = 0.9  -- border opacity when the border is shown
+-- The top category's left tick: the brand accent at marker strength, both taken
+-- from the shared layer rather than written out here, so the tick is provably the
+-- same green as the header underline and the row hover behind it, and exactly as
+-- strong as the ring around the active filter in the material table.
+local LEADER_MARKER_COLOR = { UI.Tone("accent") }
+LEADER_MARKER_COLOR[4] = UI.CHROME.ACCENT_MARK
+
 
 -- Value-history area chart geometry. The chart is a filled silhouette: one
 -- vertical bar per sample, drawn edge-to-edge (no gap) so the samples read as a
@@ -71,13 +84,21 @@ local EDGE_ALPHA     = 0.9  -- border opacity when the border is shown
 local SPARK_HEIGHT     = 32  -- area-strip height in px (head line above, scale below)
 local SPARK_MIN_BAR_H  = 2   -- floor height so the minimum sample still draws
 local SPARK_SCALE_GAP  = 2   -- gap between the strip and the min/max scale line
--- Area fill + "now" highlight, tinted by trend. RGBA floats (CT_BACKDROP wants
--- components, not the hex the labels use). The fill is semi-transparent so it
--- reads as an area wash; the newest bar is opaque and brighter to mark "now".
-local SPARK_AREA_UP       = { 0.38, 0.56, 0.43, 0.28 }  -- subdued history fill
-local SPARK_AREA_UP_NOW   = { 0.56, 0.85, 0.62, 0.92 }  -- current point
-local SPARK_AREA_DOWN     = { 0.56, 0.38, 0.38, 0.28 }
-local SPARK_AREA_DOWN_NOW = { 0.85, 0.56, 0.56, 0.92 }
+-- Area fill + "now" highlight, tinted by trend. Both tints are the palette's own
+-- gain/loss tones (the same ones the delta figure beneath the chart is written
+-- in), so the colour of the silhouette and the colour of the number it explains
+-- are the same fact stated twice. History sits at a low alpha to read as an area
+-- wash; "now" is nearly opaque so the newest sample stands out of it.
+local SPARK_HISTORY_ALPHA = 0.28
+local SPARK_NOW_ALPHA     = 0.92
+local function SparkTint(tone, alpha)
+    local r, g, b = UI.Tone(tone)
+    return { r, g, b, alpha }
+end
+local SPARK_AREA_UP       = SparkTint("gain", SPARK_HISTORY_ALPHA)
+local SPARK_AREA_UP_NOW   = SparkTint("gain", SPARK_NOW_ALPHA)
+local SPARK_AREA_DOWN     = SparkTint("loss", SPARK_HISTORY_ALPHA)
+local SPARK_AREA_DOWN_NOW = SparkTint("loss", SPARK_NOW_ALPHA)
 
 -- Expose the width bounds so the settings slider stays in sync with the layout.
 Window.DEFAULT_WIDTH = DEFAULT_WINDOW_WIDTH
@@ -201,6 +222,7 @@ end
 -- Runtime control references, created once in Initialize().
 local windowControl   -- top-level container
 local backdrop        -- background + border fill (toggled by appearance settings)
+local headerBand      -- accent wash + underline behind the identity block
 local profileLabel    -- "@account · Character" on the right of the title line
 local totalLabel      -- prominent grand-total gold figure
 local subtitleLabel   -- "<n> slots · <n> stacks · <n> items"
@@ -298,13 +320,20 @@ local function CurrentWidth()
     return width
 end
 
-local function CreateDivider(name)
-    local divider = WINDOW_MANAGER:CreateControl(name, windowControl, CT_TEXTURE)
-    divider:SetTexture("EsoUI/Art/Miscellaneous/horizontalDivider.dds")
-    divider:SetWidth(CurrentWidth() - PADDING * 2)
-    divider:SetHeight(4)
-    divider:SetColor(1, 1, 1, 0.4)
-    return divider
+-- Height of the header wash: the identity block (addon name + release line) plus
+-- its top padding, closed by a little air beneath the last line so the accent
+-- underline does not crowd the text it sits under. Derived rather than a constant
+-- so a change to either line's height carries the band with it.
+local function HeaderBandHeight()
+    return PADDING + ADDON_NAME_HEIGHT + VERSION_LINE_GAP + VERSION_DATE_HEIGHT
+        + HEADER_BAND_PAD
+end
+
+-- Both of the panel's rules come from the shared builder, at the two shared
+-- weights: STRONG under the header (it closes the identity block), SOFT above the
+-- footer (it separates diagnostics from the table without competing with it).
+local function CreateDivider(name, weight)
+    return UI.CreateRule(name, windowControl, CurrentWidth() - PADDING * 2, weight)
 end
 
 -- Build a two-column footer row (muted label left, value right), mirroring the
@@ -318,14 +347,14 @@ local function CreateFooterRow(name)
     container:SetAlpha(FOOTER_ALPHA)
 
     local label = WINDOW_MANAGER:CreateControl(nil, container, CT_LABEL)
-    label:SetFont("ZoFontGameSmall")
+    label:SetFont(FONT.small)
     label:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
     label:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     label:SetAnchor(LEFT, container, LEFT, 0, 0)
     label:SetWidth(CurrentWidth() * 0.4)
 
     local value = WINDOW_MANAGER:CreateControl(nil, container, CT_LABEL)
-    value:SetFont("ZoFontGameSmall")
+    value:SetFont(FONT.small)
     value:SetHorizontalAlignment(TEXT_ALIGN_RIGHT)
     value:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     value:SetAnchor(RIGHT, container, RIGHT, 0, 0)
@@ -346,14 +375,14 @@ local function CreateGuidanceRow(name)
     container:SetAlpha(0.84)
 
     local label = WINDOW_MANAGER:CreateControl(nil, container, CT_LABEL)
-    label:SetFont("ZoFontGameSmall")
+    label:SetFont(FONT.small)
     label:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
     label:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     label:SetAnchor(LEFT, container, LEFT, 0, 0)
     label:SetWidth(CurrentWidth() - PADDING * 2 - 16)
 
     local arrow = WINDOW_MANAGER:CreateControl(nil, container, CT_LABEL)
-    arrow:SetFont("ZoFontGameSmall")
+    arrow:SetFont(FONT.small)
     arrow:SetHorizontalAlignment(TEXT_ALIGN_RIGHT)
     arrow:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     arrow:SetAnchor(RIGHT, container, RIGHT, 0, 0)
@@ -379,6 +408,12 @@ local function AcquireRow(index)
     container:SetHeight(ROW_HEIGHT)
     container:SetMouseEnabled(true)
 
+    -- Hover wash, created first so it sits behind the row's own labels. The rows
+    -- are clickable (they open the detail window), and until now nothing said so
+    -- until the tooltip appeared; this is the same accent wash the detail and
+    -- withdraw tables use, so a hover means the same thing everywhere.
+    local hoverFill = UI.CreateHoverFill(nil, container)
+
     local leaderMarker = WINDOW_MANAGER:CreateControl(nil, container, CT_TEXTURE)
     leaderMarker:SetDimensions(LEADER_MARKER_WIDTH, ROW_HEIGHT - 6)
     leaderMarker:SetAnchor(LEFT, container, LEFT, 0, 0)
@@ -386,14 +421,14 @@ local function AcquireRow(index)
     leaderMarker:SetHidden(true)
 
     local nameLabel = WINDOW_MANAGER:CreateControl(nil, container, CT_LABEL)
-    nameLabel:SetFont("ZoFontGame")
+    nameLabel:SetFont(FONT.body)
     nameLabel:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
     nameLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     nameLabel:SetAnchor(LEFT, container, LEFT, LEADER_MARKER_WIDTH + 5, 0)
     nameLabel:SetWidth(CurrentWidth() * 0.5 - LEADER_MARKER_WIDTH - 5)
 
     local goldLabel = WINDOW_MANAGER:CreateControl(nil, container, CT_LABEL)
-    goldLabel:SetFont("ZoFontGame")
+    goldLabel:SetFont(FONT.body)
     goldLabel:SetHorizontalAlignment(TEXT_ALIGN_RIGHT)
     goldLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     goldLabel:SetAnchor(RIGHT, container, RIGHT, 0, 0)
@@ -404,6 +439,7 @@ local function AcquireRow(index)
         name = nameLabel,
         gold = goldLabel,
         leaderMarker = leaderMarker,
+        hoverFill = hoverFill,
     }
 
     -- Hover: a standard InformationTooltip with the per-category detail. Anchored
@@ -413,42 +449,42 @@ local function AcquireRow(index)
         if not data then
             return
         end
+        row.hoverFill:SetHidden(false)
         InitializeTooltip(InformationTooltip, self, TOPRIGHT, -6, 0, BOTTOMRIGHT)
-        InformationTooltip:AddLine(data.name, "ZoFontHeader2",
-            ZO_NORMAL_TEXT:UnpackRGB())
-        ZO_Tooltip_AddDivider(InformationTooltip)
+        -- Composed entirely from the shared tooltip voice: an accent title, then
+        -- one line per fact whose tone names the KIND of fact it carries (a gold
+        -- figure, a take-home figure, a plain count, a warning), and a caption for
+        -- the click hint. No colour is decided here.
+        UI.TipTitle(InformationTooltip, data.name)
         if row.isLeader then
-            InformationTooltip:AddLine(GetString(SI_BMW_TOOLTIP_TOP_CATEGORY),
-                "ZoFontGame", 0.44, 0.80, 0.62)
-            InformationTooltip:AddLine("", "ZoFontGame")
-            InformationTooltip:AddLine("", "ZoFontGame")
+            UI.TipLine(InformationTooltip, GetString(SI_BMW_TOOLTIP_TOP_CATEGORY), "accent")
+            UI.TipDivider(InformationTooltip)
         end
-        InformationTooltip:AddLine(stringformat(GetString(SI_BMW_TOOLTIP_VALUE),
-            FormatGold(data.gold)), "ZoFontGame", 1, 0.82, 0.25)
+        UI.TipLine(InformationTooltip, stringformat(GetString(SI_BMW_TOOLTIP_VALUE),
+            FormatGold(data.gold)), "gold")
         -- Net if sold through a guild trader (after the 1% + 7% fees). Only shown
-        -- when there's a value to net down; the muted green marks it as the
+        -- when there's a value to net down; the accent tone marks it as the
         -- take-home figure, matching the grand-total hover.
         if data.gold and data.gold > 0 then
-            InformationTooltip:AddLine(stringformat(GetString(SI_BMW_TOOLTIP_NET),
-                FormatGold(private.NetAfterFees(data.gold))),
-                "ZoFontGame", 0.44, 0.80, 0.62)
+            UI.TipLine(InformationTooltip, stringformat(GetString(SI_BMW_TOOLTIP_NET),
+                FormatGold(private.NetAfterFees(data.gold))), "accent")
         end
-        InformationTooltip:AddLine(stringformat(GetString(SI_BMW_TOOLTIP_SLOTS),
-            data.slots), "ZoFontGame", 0.86, 0.85, 0.78)
-        InformationTooltip:AddLine(stringformat(GetString(SI_BMW_TOOLTIP_STACKS),
-            ZO_LocalizeDecimalNumber(data.stacks)), "ZoFontGame", 0.86, 0.85, 0.78)
-        InformationTooltip:AddLine(stringformat(GetString(SI_BMW_TOOLTIP_ITEMS),
-            ZO_LocalizeDecimalNumber(data.items)), "ZoFontGame", 0.86, 0.85, 0.78)
+        UI.TipLine(InformationTooltip, stringformat(GetString(SI_BMW_TOOLTIP_SLOTS),
+            data.slots), "soft")
+        UI.TipLine(InformationTooltip, stringformat(GetString(SI_BMW_TOOLTIP_STACKS),
+            ZO_LocalizeDecimalNumber(data.stacks)), "soft")
+        UI.TipLine(InformationTooltip, stringformat(GetString(SI_BMW_TOOLTIP_ITEMS),
+            ZO_LocalizeDecimalNumber(data.items)), "soft")
         if data.unpricedSlots > 0 then
-            InformationTooltip:AddLine(stringformat(GetString(SI_BMW_TOOLTIP_UNPRICED),
-                data.unpricedSlots), "ZoFontGame", 0.82, 0.56, 0.37)
+            UI.TipLine(InformationTooltip, stringformat(GetString(SI_BMW_TOOLTIP_UNPRICED),
+                data.unpricedSlots), "warn")
         end
         -- Hint that the row is clickable for the full per-material breakdown.
-        ZO_Tooltip_AddDivider(InformationTooltip)
-        InformationTooltip:AddLine(GetString(SI_BMW_TOOLTIP_CLICK_HINT),
-            "ZoFontGameSmall", 0.55, 0.79, 0.62)
+        UI.TipDivider(InformationTooltip)
+        UI.TipCaption(InformationTooltip, GetString(SI_BMW_TOOLTIP_CLICK_HINT), "accent")
     end)
     container:SetHandler("OnMouseExit", function()
+        row.hoverFill:SetHidden(true)
         ClearTooltip(InformationTooltip)
     end)
 
@@ -483,18 +519,30 @@ function Window.Initialize()
     windowControl:SetClampedToScreen(true)
     windowControl:SetDimensions(CurrentWidth(), 120)
     windowControl:SetHidden(true)
-    windowControl:SetMouseEnabled(true)  -- so category rows can receive hover
+    -- Make the panel itself opaque to the mouse. The child rows enable the mouse
+    -- on their own containers (that is what gives them hover and click), so this
+    -- is not what powers the row tooltips -- it is what stops a click on the
+    -- panel's own background/padding from falling through to whatever sits
+    -- underneath it. Without it the strip between rows is a hole in the window.
+    windowControl:SetMouseEnabled(true)
 
     Window.ApplyAnchor()
 
     backdrop = WINDOW_MANAGER:CreateControl(addon.name .. "_Backdrop", windowControl, CT_BACKDROP)
     backdrop:SetAnchorFill(windowControl)
-    backdrop:SetEdgeTexture("", 1, 1, 1)
-    backdrop:SetInsets(2, 2, -2, -2)
+
+    -- The shared letterhead: an accent wash behind the addon name and release
+    -- line, closed by an accent underline. Created before those labels so it sits
+    -- behind them, and spanning the full window width (not the inner width) so it
+    -- reads as a band across the panel rather than a floating rectangle.
+    headerBand = UI.CreateHeaderBand(addon.name .. "_HeaderBand", windowControl,
+        CurrentWidth(), HeaderBandHeight())
+    headerBand:SetAnchor(TOPLEFT, windowControl, TOPLEFT, 0, 0)
+
     Window.ApplyAppearance()
 
     versionNameLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_VersionName", windowControl, CT_LABEL)
-    versionNameLabel:SetFont("ZoFontWinH4")
+    versionNameLabel:SetFont(FONT.heading)
     versionNameLabel:SetHorizontalAlignment(TEXT_ALIGN_CENTER)
     versionNameLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     versionNameLabel:SetAlpha(1)
@@ -503,19 +551,23 @@ function Window.Initialize()
     versionNameLabel:SetText(Colorize(COLOR_ACCENT, GetString(SI_BMW_WINDOW_ADDON_NAME)))
 
     versionLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_Version", windowControl, CT_LABEL)
-    versionLabel:SetFont("ZoFontGameSmall")
+    versionLabel:SetFont(FONT.small)
     versionLabel:SetHorizontalAlignment(TEXT_ALIGN_CENTER)
     versionLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     versionLabel:SetAlpha(0.58)
     versionLabel:SetWidth(CurrentWidth() - PADDING * 2)
     versionLabel:SetHeight(VERSION_DATE_HEIGHT)
-    versionLabel:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_WINDOW_VERSION_DATE)))
+    -- Version and release date come from the core table, not from the localized
+    -- string, so bumping BureauOfMaterialWorth.version updates this footer in
+    -- every language at once.
+    versionLabel:SetText(Colorize(COLOR_MUTED, stringformat(
+        GetString(SI_BMW_WINDOW_VERSION_DATE), addon.version, addon.releaseDate)))
     versionNameLabel:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, PADDING)
     versionLabel:SetAnchor(TOPLEFT, versionNameLabel, BOTTOMLEFT, 0, VERSION_LINE_GAP)
 
     -- Account/character identity follows the bag composition line.
     profileLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_Profile", windowControl, CT_LABEL)
-    profileLabel:SetFont("ZoFontGameSmall")
+    profileLabel:SetFont(FONT.small)
     profileLabel:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
     profileLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     profileLabel:SetAlpha(0.78)
@@ -525,7 +577,7 @@ function Window.Initialize()
     profileLabel:SetHeight(PROFILE_HEIGHT)
 
     totalLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_Total", windowControl, CT_LABEL)
-    totalLabel:SetFont("ZoFontWinH1")
+    totalLabel:SetFont(FONT.hero)
     totalLabel:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
     totalLabel:SetDimensions(CurrentWidth() - PADDING * 2, TOTAL_HEIGHT)
     totalLabel:SetAnchor(TOPLEFT, versionLabel, BOTTOMLEFT, 0, VERSION_TO_TOTAL_GAP)
@@ -545,19 +597,19 @@ function Window.Initialize()
         local net = private.NetAfterFees(gross)
 
         InitializeTooltip(InformationTooltip, self, TOPLEFT, 0, 6, BOTTOMLEFT)
-        InformationTooltip:AddLine(GetString(SI_BMW_NET_TOOLTIP_TITLE), "ZoFontHeader2",
-            ZO_NORMAL_TEXT:UnpackRGB())
-        ZO_Tooltip_AddDivider(InformationTooltip)
-        -- Gross (list price), then each fee as a negative, then the net.
-        InformationTooltip:AddLine(stringformat(GetString(SI_BMW_NET_TOOLTIP_GROSS),
-            FormatGold(gross)), "ZoFontGame", 0.86, 0.85, 0.78)
-        InformationTooltip:AddLine(stringformat(GetString(SI_BMW_NET_TOOLTIP_LISTING),
-            FormatGold(listing)), "ZoFontGame", 0.82, 0.56, 0.37)
-        InformationTooltip:AddLine(stringformat(GetString(SI_BMW_NET_TOOLTIP_SALES),
-            FormatGold(sales)), "ZoFontGame", 0.82, 0.56, 0.37)
-        ZO_Tooltip_AddDivider(InformationTooltip)
-        InformationTooltip:AddLine(stringformat(GetString(SI_BMW_NET_TOOLTIP_NET),
-            FormatGold(net)), "ZoFontGame", 0.44, 0.80, 0.62)
+        UI.TipTitle(InformationTooltip, GetString(SI_BMW_NET_TOOLTIP_TITLE))
+        -- Gross (list price), then each fee as a deduction, then the net below a
+        -- divider: fees carry the warning tone because they are money leaving, the
+        -- net carries the accent because it is the answer the hover exists for.
+        UI.TipLine(InformationTooltip, stringformat(GetString(SI_BMW_NET_TOOLTIP_GROSS),
+            FormatGold(gross)), "soft")
+        UI.TipLine(InformationTooltip, stringformat(GetString(SI_BMW_NET_TOOLTIP_LISTING),
+            FormatGold(listing)), "warn")
+        UI.TipLine(InformationTooltip, stringformat(GetString(SI_BMW_NET_TOOLTIP_SALES),
+            FormatGold(sales)), "warn")
+        UI.TipDivider(InformationTooltip)
+        UI.TipLine(InformationTooltip, stringformat(GetString(SI_BMW_NET_TOOLTIP_NET),
+            FormatGold(net)), "accent")
     end)
     totalLabel:SetHandler("OnMouseExit", function()
         StopTotalGlow()
@@ -565,16 +617,15 @@ function Window.Initialize()
     end)
 
     subtitleLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_Subtitle", windowControl, CT_LABEL)
-    subtitleLabel:SetFont("ZoFontGameSmall")
+    subtitleLabel:SetFont(FONT.small)
     subtitleLabel:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
     subtitleLabel:SetAlpha(0.78)
     subtitleLabel:SetAnchor(TOPLEFT, profileLabel, BOTTOMLEFT, 0, PROFILE_TO_SUBTITLE_GAP)
     subtitleLabel:SetWidth(CurrentWidth() - PADDING * 2)
     profileLabel:SetAnchor(TOPLEFT, totalLabel, BOTTOMLEFT, 0, TOTAL_TO_PROFILE_GAP)
 
-    dividerTop = CreateDivider(addon.name .. "_DividerTop")
-    dividerBottom = CreateDivider(addon.name .. "_DividerBottom")
-    dividerBottom:SetColor(1, 1, 1, 0.22)
+    dividerTop = CreateDivider(addon.name .. "_DividerTop", "strong")
+    dividerBottom = CreateDivider(addon.name .. "_DividerBottom", "soft")
 
     footerInventoryRow = CreateFooterRow(addon.name .. "_FooterInventory")
     footerPriceRefreshRow = CreateFooterRow(addon.name .. "_FooterPriceRefresh")
@@ -600,11 +651,8 @@ function Window.Initialize()
             return
         end
         InitializeTooltip(InformationTooltip, self, TOPRIGHT, -6, 0, BOTTOMRIGHT)
-        InformationTooltip:AddLine(GetString(SI_BMW_FOOTER_COVERAGE_LABEL), "ZoFontHeader2",
-            ZO_NORMAL_TEXT:UnpackRGB())
-        ZO_Tooltip_AddDivider(InformationTooltip)
-        InformationTooltip:AddLine(GetString(SI_BMW_FOOTER_COVERAGE_UNPRICED_HINT),
-            "ZoFontGame", 0.82, 0.56, 0.37)
+        UI.TipTitle(InformationTooltip, GetString(SI_BMW_FOOTER_COVERAGE_LABEL))
+        UI.TipLine(InformationTooltip, GetString(SI_BMW_FOOTER_COVERAGE_UNPRICED_HINT), "warn")
     end)
     footerPricesRow.container:SetHandler("OnMouseExit", function()
         ClearTooltip(InformationTooltip)
@@ -636,23 +684,19 @@ function Window.Initialize()
             return
         end
         InitializeTooltip(InformationTooltip, self, TOPRIGHT, -6, 0, BOTTOMRIGHT)
-        InformationTooltip:AddLine(GetString(SI_BMW_FOOTER_DELTA_TOOLTIP_TITLE), "ZoFontHeader2",
-            ZO_NORMAL_TEXT:UnpackRGB())
-        ZO_Tooltip_AddDivider(InformationTooltip)
+        UI.TipTitle(InformationTooltip, GetString(SI_BMW_FOOTER_DELTA_TOOLTIP_TITLE))
         local function SignedAmount(value)
             local sign = value >= 0 and "+" or "-"
             return sign .. FormatGold(mathabs(value))
         end
-        InformationTooltip:AddLine(stringformat(GetString(SI_BMW_FOOTER_DELTA_TOOLTIP_STOCK),
-            SignedAmount(details.quantityGold or 0)),
-            "ZoFontGame", 0.86, 0.85, 0.78)
-        InformationTooltip:AddLine(stringformat(GetString(SI_BMW_FOOTER_DELTA_TOOLTIP_PRICES),
-            SignedAmount(details.priceGold or 0)),
-            "ZoFontGame", 0.86, 0.85, 0.78)
-        InformationTooltip:AddLine(GetString(SI_BMW_FOOTER_DELTA_TOOLTIP_ACCUMULATION),
-            "ZoFontGame", 0.78, 0.77, 0.72)
-        InformationTooltip:AddLine(GetString(SI_BMW_FOOTER_DELTA_TOOLTIP_CLICK),
-            "ZoFontGame", 0.82, 0.56, 0.37)
+        -- The two causes of a change, then the caveat and the call to action: the
+        -- explanatory lines drop to captions so the two figures stay the subject.
+        UI.TipLine(InformationTooltip, stringformat(GetString(SI_BMW_FOOTER_DELTA_TOOLTIP_STOCK),
+            SignedAmount(details.quantityGold or 0)), "soft")
+        UI.TipLine(InformationTooltip, stringformat(GetString(SI_BMW_FOOTER_DELTA_TOOLTIP_PRICES),
+            SignedAmount(details.priceGold or 0)), "soft")
+        UI.TipCaption(InformationTooltip, GetString(SI_BMW_FOOTER_DELTA_TOOLTIP_ACCUMULATION))
+        UI.TipCaption(InformationTooltip, GetString(SI_BMW_FOOTER_DELTA_TOOLTIP_CLICK), "accent")
     end)
     footerDeltaRow.container:SetHandler("OnMouseExit", function()
         ClearTooltip(InformationTooltip)
@@ -675,14 +719,14 @@ function Window.Initialize()
     -- below. The bars themselves are created lazily by RenderSparkline so the
     -- strip is sized to whatever data exists.
     sparkCaption = WINDOW_MANAGER:CreateControl(addon.name .. "_SparkCaption", windowControl, CT_LABEL)
-    sparkCaption:SetFont("ZoFontGameSmall")
+    sparkCaption:SetFont(FONT.small)
     sparkCaption:SetHorizontalAlignment(TEXT_ALIGN_LEFT)
     sparkCaption:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     sparkCaption:SetHeight(FOOTER_LINE)
 
     -- Current value + trend arrow, right-aligned to sit opposite the caption.
     sparkHeadLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_SparkHead", windowControl, CT_LABEL)
-    sparkHeadLabel:SetFont("ZoFontGameSmall")
+    sparkHeadLabel:SetFont(FONT.small)
     sparkHeadLabel:SetHorizontalAlignment(TEXT_ALIGN_RIGHT)
     sparkHeadLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     sparkHeadLabel:SetHeight(FOOTER_LINE)
@@ -694,7 +738,7 @@ function Window.Initialize()
     -- Min/max scale line beneath the strip: the series value range, centered so
     -- it reads as a caption for the whole silhouette rather than hugging one edge.
     sparkScaleLabel = WINDOW_MANAGER:CreateControl(addon.name .. "_SparkScale", windowControl, CT_LABEL)
-    sparkScaleLabel:SetFont("ZoFontGameSmall")
+    sparkScaleLabel:SetFont(FONT.small)
     sparkScaleLabel:SetHorizontalAlignment(TEXT_ALIGN_CENTER)
     sparkScaleLabel:SetVerticalAlignment(TEXT_ALIGN_CENTER)
 
@@ -708,23 +752,18 @@ function Window.Initialize()
         end
         local first, last = points[1], points[#points]
         InitializeTooltip(InformationTooltip, self, TOPRIGHT, -6, 0, BOTTOMRIGHT)
-        InformationTooltip:AddLine(GetString(SI_BMW_FOOTER_HISTORY_LABEL), "ZoFontHeader2",
-            ZO_NORMAL_TEXT:UnpackRGB())
-        ZO_Tooltip_AddDivider(InformationTooltip)
-        InformationTooltip:AddLine(stringformat(GetString(SI_BMW_HISTORY_TOOLTIP_POINTS), #points),
-            "ZoFontGame", 0.86, 0.85, 0.78)
-        InformationTooltip:AddLine(stringformat(GetString(SI_BMW_HISTORY_TOOLTIP_OLDEST),
-            FormatGold(first.gold or 0)), "ZoFontGame", 0.86, 0.85, 0.78)
-        InformationTooltip:AddLine(stringformat(GetString(SI_BMW_HISTORY_TOOLTIP_NEWEST),
-            FormatGold(last.gold or 0)), "ZoFontGame", 1, 0.82, 0.25)
-        -- Net change across the recorded window, colored by direction.
+        UI.TipTitle(InformationTooltip, GetString(SI_BMW_FOOTER_HISTORY_LABEL))
+        UI.TipLine(InformationTooltip,
+            stringformat(GetString(SI_BMW_HISTORY_TOOLTIP_POINTS), #points), "soft")
+        UI.TipLine(InformationTooltip, stringformat(GetString(SI_BMW_HISTORY_TOOLTIP_OLDEST),
+            FormatGold(first.gold or 0)), "soft")
+        UI.TipLine(InformationTooltip, stringformat(GetString(SI_BMW_HISTORY_TOOLTIP_NEWEST),
+            FormatGold(last.gold or 0)), "gold")
+        -- Net change across the recorded window, in the same gain/loss tones that
+        -- tint the silhouette being hovered.
         local change = (last.gold or 0) - (first.gold or 0)
-        local r, g, b = 0.55, 0.79, 0.62
-        if change < 0 then
-            r, g, b = 0.82, 0.54, 0.54
-        end
-        InformationTooltip:AddLine(stringformat(GetString(SI_BMW_HISTORY_TOOLTIP_CHANGE),
-            FormatGold(change)), "ZoFontGame", r, g, b)
+        UI.TipLine(InformationTooltip, stringformat(GetString(SI_BMW_HISTORY_TOOLTIP_CHANGE),
+            FormatGold(change)), change < 0 and "loss" or "gain")
     end)
     sparkContainer:SetHandler("OnMouseExit", function()
         ClearTooltip(InformationTooltip)
@@ -783,20 +822,31 @@ local function RenderFooter()
     -- Value-change delta. Hidden until stock differs from the last acknowledged
     -- state; clicking it opens the breakdown and begins a new accumulation period.
     local delta = lastSnapshot.delta
-    if delta and delta ~= 0 then
-        local gain = delta > 0
-        local color = gain and COLOR_GAIN or COLOR_LOSS
-        local arrow = gain and ARROW_UP or ARROW_DOWN
-        local magnitude = ZO_LocalizeDecimalNumber(zo_round(mathabs(delta)))
+    -- Show the row for any pending change, including an even material swap whose
+    -- gold delta is exactly zero: it still needs to be reviewable so that
+    -- clicking it can advance the baseline.
+    if lastSnapshot.deltaPending or (delta and delta ~= 0) then
+        local amount = delta or 0
         local labelKey = lastSnapshot.deltaMode == "session"
             and SI_BMW_FOOTER_DELTA_LABEL_SESSION or SI_BMW_FOOTER_DELTA_LABEL
         footerDeltaRow.container:SetHidden(false)
         footerDeltaRow.label:SetText(Colorize(COLOR_MUTED, GetString(labelKey)))
-        -- The arrow texture carries the direction; the number is colored, the
-        -- texture left outside Colorize since textures aren't tinted.
-        footerDeltaRow.value:SetText(arrow .. " " .. Colorize(color,
-            stringformat(GetString(SI_BMW_FOOTER_DELTA_VALUE),
-                    magnitude .. " " .. GOLD_ICON)))
+
+        local magnitude = ZO_LocalizeDecimalNumber(zo_round(mathabs(amount)))
+        local valueText = stringformat(GetString(SI_BMW_FOOTER_DELTA_VALUE),
+            magnitude .. " " .. GOLD_ICON)
+        if amount == 0 then
+            -- Composition changed but the value did not: no direction to point,
+            -- so render it neutral rather than implying a gain or a loss.
+            footerDeltaRow.value:SetText(Colorize(COLOR_MUTED, valueText))
+        else
+            local gain = amount > 0
+            local color = gain and COLOR_GAIN or COLOR_LOSS
+            local arrow = gain and ARROW_UP or ARROW_DOWN
+            -- The arrow texture carries the direction; the number is colored, the
+            -- texture left outside Colorize since textures aren't tinted.
+            footerDeltaRow.value:SetText(arrow .. " " .. Colorize(color, valueText))
+        end
     else
         footerDeltaRow.container:SetHidden(true)
     end
@@ -826,19 +876,19 @@ local function RenderGuidance(snapshot)
     row.container:SetHidden(row.action == nil)
 end
 
--- Acquire (or create) the Nth chart bar, a CT_BACKDROP fill bottom-anchored in
--- the strip so its height grows upward. Pooled and reused across renders so a
--- refresh re-points existing bars instead of creating new controls.
+-- Acquire (or create) the Nth chart bar, a flat fill bottom-anchored in the strip
+-- so its height grows upward. Pooled and reused across renders so a refresh
+-- re-points existing bars instead of creating new controls. The bar is the same
+-- shared flat-rectangle primitive the bands, rules and washes are built from --
+-- it is simply the one whose colour is data rather than chrome, so it is created
+-- with the neutral history tint and repainted per render.
 local function AcquireSparkBar(index)
     local bar = sparkBars[index]
     if bar then
         return bar
     end
 
-    bar = WINDOW_MANAGER:CreateControl(
-        addon.name .. "_SparkBar" .. index, sparkContainer, CT_BACKDROP)
-    bar:SetEdgeColor(0, 0, 0, 0)        -- no border, just the fill
-    bar:SetInsets(0, 0, 0, 0)
+    bar = UI.CreateFill(addon.name .. "_SparkBar" .. index, sparkContainer, SPARK_AREA_UP)
     sparkBars[index] = bar
     return bar
 end
@@ -878,17 +928,35 @@ local function RenderSparkline(innerWidth)
     sparkCaption:SetText(Colorize(COLOR_MUTED, GetString(SI_BMW_FOOTER_HISTORY_LABEL)))
 
     local count = #points
-    local minGold, maxGold = points[1].gold or 0, points[1].gold or 0
-    for i = 2, count do
+
+    -- A bar is never narrower than one pixel, so a series with more samples than
+    -- the strip has pixels would sum up wider than its container and spill past
+    -- the panel edge. VALUE_HISTORY_CAPACITY (90) fits comfortably inside the
+    -- narrowest supported panel (MIN_WINDOW_WIDTH 400 minus padding), but nothing
+    -- enforced that pairing: raising the capacity or lowering the minimum width
+    -- silently broke the layout. Clamp to what fits and drop the oldest samples
+    -- beyond it, so the chart degrades to a shorter time window instead.
+    local maxBars = zo_round(innerWidth)
+    if maxBars < 2 then
+        maxBars = 2
+    end
+    local firstIndex = 1
+    if count > maxBars then
+        firstIndex = count - maxBars + 1
+    end
+    local drawn = count - firstIndex + 1
+
+    local minGold, maxGold = points[firstIndex].gold or 0, points[firstIndex].gold or 0
+    for i = firstIndex + 1, count do
         local g = points[i].gold or 0
         if g < minGold then minGold = g end
         if g > maxGold then maxGold = g end
     end
     local span = maxGold - minGold
 
-    -- Overall trend across the recorded window decides the fill tint: the newest
+    -- Overall trend across the drawn window decides the fill tint: the newest
     -- sample at or above the oldest reads as a gain (green), below as a loss (red).
-    local firstGold = points[1].gold or 0
+    local firstGold = points[firstIndex].gold or 0
     local lastGold = points[count].gold or 0
     local rising = lastGold >= firstGold
     local fillColor = rising and SPARK_AREA_UP or SPARK_AREA_DOWN
@@ -897,22 +965,22 @@ local function RenderSparkline(innerWidth)
     -- Bars fill the strip edge-to-edge so the series reads as one shape. Width is
     -- the exact per-sample slot; left edges are placed at rounded slot boundaries
     -- and each bar is widened to meet the next so rounding leaves no seams.
-    local slot = innerWidth / count
+    local slot = innerWidth / drawn
 
-    for i = 1, count do
-        local bar = AcquireSparkBar(i)
+    for i = firstIndex, count do
+        local barIndex = i - firstIndex + 1
+        local bar = AcquireSparkBar(barIndex)
         local gold = points[i].gold or 0
         -- Normalize 0..1 within the series; a flat series pins to full height.
         local frac = span > 0 and (gold - minGold) / span or 1
         local height = SPARK_MIN_BAR_H + frac * (SPARK_HEIGHT - SPARK_MIN_BAR_H)
 
-        local color = (i == count) and nowColor or fillColor
-        bar:SetCenterColor(color[1], color[2], color[3], color[4])
+        UI.PaintFill(bar, (i == count) and nowColor or fillColor)
 
         -- Edge-to-edge: this bar spans from its slot boundary to the next, so the
         -- rounded left edges abut with no gap.
-        local left = zo_round((i - 1) * slot)
-        local right = zo_round(i * slot)
+        local left = zo_round((barIndex - 1) * slot)
+        local right = zo_round(barIndex * slot)
         local barWidth = right - left
         if barWidth < 1 then
             barWidth = 1
@@ -926,7 +994,7 @@ local function RenderSparkline(innerWidth)
     end
 
     -- Hide any pooled bars left from a previous (longer) series.
-    for i = count + 1, #sparkBars do
+    for i = drawn + 1, #sparkBars do
         sparkBars[i]:SetHidden(true)
     end
 
@@ -1054,9 +1122,23 @@ function Window.Update()
     end
 
     -- Hide any pooled rows left over from a previous (larger) render.
+    --
+    -- Clearing `data` and `isLeader` matters as much as hiding the control: the
+    -- OnMouseEnter/OnMouseUp handlers close over `row`, not over the render that
+    -- filled it, and they only bail on a nil `data`. A leftover row that kept
+    -- last render's data would still hold a reference to a category that is no
+    -- longer in the bag, and hidden controls can retain a queued mouse-up (the
+    -- press landing on a row that this render hides), which would open the
+    -- detail window for a stale category. Nil-ing the payload makes the guards
+    -- in those handlers actually fire and drops the reference for the GC.
     for i = rowCount + 1, #rowPool do
-        rowPool[i].container:SetHidden(true)
+        rowPool[i].data = nil
+        rowPool[i].isLeader = nil
         rowPool[i].leaderMarker:SetHidden(true)
+        -- Also drop the hover wash: a row hidden while the pointer was over it
+        -- would come back from the pool already lit.
+        rowPool[i].hoverFill:SetHidden(true)
+        rowPool[i].container:SetHidden(true)
     end
 
     dividerTop:SetHidden(not showBreakdown or rowCount == 0)
@@ -1087,12 +1169,13 @@ function Window.Update()
     y = y + FOOTER_LINE
 
     -- Optional value-change row. Only reserves vertical space when it will
-    -- actually be shown (a known, non-zero delta), so the panel doesn't grow an
-    -- empty gap on the first visit.
+    -- actually be shown, so the panel doesn't grow an empty gap on the first
+    -- visit. Must match RenderFooter's visibility test exactly -- including the
+    -- zero-delta composition change -- or the layout and the row disagree.
     footerDeltaRow.container:ClearAnchors()
     footerDeltaRow.container:SetAnchor(TOPLEFT, windowControl, TOPLEFT, PADDING, y)
     local delta = snapshot.delta
-    if delta and delta ~= 0 then
+    if snapshot.deltaPending or (delta and delta ~= 0) then
         y = y + FOOTER_LINE
     end
 
@@ -1221,6 +1304,11 @@ function Window.ApplyWidth()
     windowControl:SetWidth(width)
 
     local innerWidth = width - PADDING * 2
+    -- The band spans the whole panel, so it tracks the outer width; its underline
+    -- is anchored to the band's own edges and follows automatically.
+    if headerBand then
+        headerBand:SetWidth(width)
+    end
     if dividerTop then
         dividerTop:SetWidth(innerWidth)
     end
@@ -1286,19 +1374,17 @@ function Window.ApplyAppearance()
     end
 
     local sv = GetSavedVars()
-    local showBackground = sv.showBackground ~= false
-    local showBorder = sv.showBorder ~= false
+    -- One call: the shared shell decides the ground tint, border tone and insets;
+    -- this file only reports which of the two layers the player wants drawn.
+    UI.ApplyPanelChrome(backdrop, {
+        background = sv.showBackground ~= false,
+        border = sv.showBorder ~= false,
+    })
 
-    if showBackground then
-        backdrop:SetCenterColor(0.05, 0.05, 0.06, BG_ALPHA)
-    else
-        backdrop:SetCenterColor(0, 0, 0, 0)
-    end
-
-    if showBorder then
-        backdrop:SetEdgeColor(0.42, 0.40, 0.34, EDGE_ALPHA)
-    else
-        backdrop:SetEdgeColor(0, 0, 0, 0)
+    -- The letterhead belongs to the background: with the panel reduced to floating
+    -- text there is no surface for a tinted strip to sit on.
+    if headerBand then
+        headerBand:SetHidden(sv.showBackground == false)
     end
 end
 
