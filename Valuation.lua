@@ -58,29 +58,32 @@ local STACK_SIZE = private.STACK_SIZE
 -- ---------------------------------------------------------------------------
 -- We keep a compact series of price points per itemId in savedVars. The newest
 -- point remains the baseline for the detail table's day-over-day change, while
--- the whole series supports seven-day trend analysis. RECORD_INTERVAL_SECONDS
--- gates writes so repeatedly opening the bag cannot fill the series with nearly
--- identical points. The source key is stored with every new point: switching
--- from MM to TTC/ATT starts a fresh comparable run instead of creating a false
--- market spike. PRUNE_MAX_AGE_SECONDS drops entries for materials not observed
--- in a month; the per-item point count is bounded separately.
-local RECORD_INTERVAL_SECONDS = 20 * 60 * 60   -- ~20h
+-- the whole series supports seven-day trend analysis. Writes are session-gated:
+-- the first LibPrice observation of a UI session (login or /reloadui) appends a
+-- point even if the previous session was only minutes ago, and later lookups in
+-- the same session (a bag reopen, or /bmw refresh) update that session's point
+-- in place so the bounded series is not filled with near-duplicates. Opening,
+-- sorting, or searching the table never writes history. The source key is stored
+-- with every new point: switching from MM to TTC/ATT starts a fresh comparable
+-- run instead of creating a false market spike. PRUNE_MAX_AGE_SECONDS drops
+-- entries for materials not observed in a month; the per-item point count is
+-- bounded separately.
 local PRUNE_MAX_AGE_SECONDS   = 30 * 24 * 60 * 60  -- 30 days
 local PRICE_TREND_WINDOW_SECONDS = 7 * 24 * 60 * 60
-local PRICE_HISTORY_MAX_POINTS = 10
+-- Session-gated writes can land more than one point a day, so keep enough room
+-- for a week of typical play (a few logins per day) inside the seven-day window.
+local PRICE_HISTORY_MAX_POINTS = 30
 
 -- Grand-total value history (the footer sparkline)
 -- ---------------------------------------------------------------------------
--- One sample of the whole-bag valuation is recorded per craft-bag open, into a
--- fixed-size ring buffer in savedVars (valueHistory). The ring is capacity-
--- bounded so it can never grow without limit -- old samples are overwritten in
--- place rather than shifted, so a write is O(1) and there is nothing to prune.
--- VALUE_HISTORY_MIN_INTERVAL collapses an "open/close/open" burst into a single
--- moving sample: within the window the latest open just updates the newest
--- point instead of appending, so the sparkline keeps a meaningful time scale
--- rather than filling with points minutes apart.
-local VALUE_HISTORY_CAPACITY     = 90
-local VALUE_HISTORY_MIN_INTERVAL = 4 * 60 * 60  -- ~4h
+-- One sample of the whole-bag valuation is recorded per UI session (login or
+-- /reloadui), into a fixed-size ring buffer in savedVars (valueHistory). The
+-- ring is capacity-bounded so it can never grow without limit -- old samples are
+-- overwritten in place rather than shifted, so a write is O(1) and there is
+-- nothing to prune. Reopening the Craft Bag in the same session is a no-op, so
+-- a 20-minute relog still adds a fresh point without filling the graph from
+-- every bag visit.
+local VALUE_HISTORY_CAPACITY = 90
 
 -- SavedVariables are serialized as verbose Lua tables: one material with four
 -- named fields consumes six or more lines. The Craft Bag commonly holds several
@@ -551,6 +554,8 @@ local lastInventoryUpdateMs = nil  -- GetGameTimeMilliseconds() of the last inve
 local lastPriceRefreshMs = nil     -- GetGameTimeMilliseconds() of the last LibPrice lookup
 local priceHistoryUpdatePending = false
 local priceLookupItemIds = {}      -- itemIds queried from LibPrice in the current pass
+local valueHistoryRecordedThisSession = false
+local priceHistoryWrittenThisSession = {} -- [itemId] = true after this session's point exists
 -- Seven-day analysis does not depend on stack-size changes. Window.Update
 -- reuses this summary until bag composition, prices, history, or the threshold
 -- actually change; a deposit of an already-held material must not re-walk
@@ -598,15 +603,17 @@ local isBagVisible = false
 local INCREMENTAL_DRIFT_LIMIT = 250
 local incrementalApplies = 0
 
--- Append the current grand total to the value-history ring buffer. Called once
--- per craft-bag open (after the delta block, so grandGold/grandItems are the
--- just-computed figures). The buffer never shifts: `head` is the index of the
--- newest sample and writes wrap modulo VALUE_HISTORY_CAPACITY, overwriting the
--- oldest entry once full. A new open within VALUE_HISTORY_MIN_INTERVAL of the
--- newest sample updates that sample in place instead of appending, so a rapid
--- open/close/open burst stays one point and the sparkline keeps a real time
--- scale. No-op without savedVars (pre-init) so it is safe to call unguarded.
+-- Append the current grand total to the value-history ring buffer. Called from
+-- FinalizeVisit after the delta block, so grandGold/grandItems are the
+-- just-computed figures. The first write of a UI session always appends, even
+-- if the previous session was only minutes ago; later Craft Bag opens in the
+-- same session are a no-op so the graph stays one sample per login. No-op
+-- without savedVars (pre-init) so it is safe to call unguarded.
 local function RecordValuePoint()
+    if valueHistoryRecordedThisSession then
+        return
+    end
+
     local sv = private.savedVars
     if not sv then
         return
@@ -626,20 +633,10 @@ local function RecordValuePoint()
         hist.head = 0
     end
 
-    local now = GetTimeStamp()
-    local newest = hist.head > 0 and hist.entries[hist.head] or nil
-    if newest and newest.t and (now - newest.t) < VALUE_HISTORY_MIN_INTERVAL then
-        -- Still inside the same sampling window: move the newest point forward
-        -- rather than adding a near-duplicate.
-        newest.t = now
-        newest.gold = grandGold
-        newest.items = grandItems
-        return
-    end
-
     local nextHead = (hist.head % VALUE_HISTORY_CAPACITY) + 1
-    hist.entries[nextHead] = { t = now, gold = grandGold, items = grandItems }
+    hist.entries[nextHead] = { t = GetTimeStamp(), gold = grandGold, items = grandItems }
     hist.head = nextHead
+    valueHistoryRecordedThisSession = true
 end
 
 -- Capture only the data needed to explain the next visit delta. This is a
@@ -1559,7 +1556,7 @@ function Valuation.OnCraftBagHidden()
     StopPriceRetry()
     -- Backstop: if the bag is closed before the self-heal finished (or was never
     -- fully priced), finalize now so the visit baseline still advances and the
-    -- history point is recorded exactly once per open.
+    -- session's history point is recorded exactly once.
     FinalizeVisit(false)
 end
 
@@ -1865,9 +1862,19 @@ UpdatePriceHistoryBaselines = function()
             local latest = points[#points]
             local sourceChanged = latest and latest.s and info.source and latest.s ~= info.source
             local needsSourceAnchor = latest and not latest.s and info.source ~= nil
+            local alreadyWritten = priceHistoryWrittenThisSession[info.itemId]
+            -- A new UI session always appends, even if the previous login was only
+            -- minutes ago. Later lookups in the same session (bag reopen or a
+            -- manual refresh) keep a single point and update it in place.
             if not latest or not latest.t or sourceChanged or needsSourceAnchor
-                or (now - latest.t) >= RECORD_INTERVAL_SECONDS then
+                or not alreadyWritten then
                 AppendPriceHistoryPoint(points, unitPrice, now, info.source)
+                history[info.itemId] = EncodePriceHistorySeries(points)
+                priceHistoryWrittenThisSession[info.itemId] = true
+            else
+                latest.p = zo_round(unitPrice)
+                latest.t = now
+                latest.s = info.source
                 history[info.itemId] = EncodePriceHistorySeries(points)
             end
         end

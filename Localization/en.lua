@@ -55,7 +55,7 @@ local strings = {
     SI_BMW_SETTING_BORDER_NAME = "Show border",
     SI_BMW_SETTING_BORDER_TOOLTIP = "Draw the panel's border edge. Turn off for a cleaner, frameless look.",
     SI_BMW_SETTING_VALUE_HISTORY_NAME = "Show value history",
-    SI_BMW_SETTING_VALUE_HISTORY_TOOLTIP = "Draw a small sparkline of your Craft Bag's total value over time at the bottom of the panel. One point is recorded each time you open the Craft Bag (at most once every few hours), keeping the last 90 points. Hover the sparkline for the oldest, newest, and net-change figures.",
+    SI_BMW_SETTING_VALUE_HISTORY_TOOLTIP = "Draw a small sparkline of your Craft Bag's total value over time at the bottom of the panel. One point is recorded per login or /reloadui; later Craft Bag opens in the same session do not add another point. The last 90 points are kept. Hover the sparkline for the oldest, newest, and net-change figures.",
     SI_BMW_SETTING_PROFILE_NAME = "Show account label",
     SI_BMW_SETTING_PROFILE_TOOLTIP = "Show your @account handle and current character name on the panel's title line. The Craft Bag is shared across your whole account, so the handle names whose bag this is. Turn off for a cleaner title.",
     SI_BMW_SETTING_NOTIFY_VISIT_NAME = "Chat notifications",
@@ -75,7 +75,7 @@ local strings = {
     SI_BMW_SETTING_DEBUG_MODE_NAME = "Debug mode",
     SI_BMW_SETTING_DEBUG_MODE_TOOLTIP = "Controls how much diagnostic output the addon prints to chat.",
     SI_BMW_SETTING_REFRESH_NAME = "Refresh prices now",
-    SI_BMW_SETTING_REFRESH_TOOLTIP = "Clear the cached prices and recompute the Craft Bag value. Useful after Master Merchant or Tamriel Trade Centre finishes importing fresh data.",
+    SI_BMW_SETTING_REFRESH_TOOLTIP = "Clear the cached prices and recompute the Craft Bag value. Useful after Master Merchant or Tamriel Trade Centre finishes importing fresh data. The same action is available by clicking Market prices on the panel.",
 
     -- Window
     -- Account/character label on the title line. %s = @account handle, %s =
@@ -305,6 +305,9 @@ local strings = {
     -- Window: footer (two-column label -> value rows)
     SI_BMW_FOOTER_INVENTORY_LABEL = "Bag contents",
     SI_BMW_FOOTER_PRICES_LABEL = "Market prices",
+    SI_BMW_FOOTER_PRICES_TOOLTIP_TITLE = "Market prices",
+    SI_BMW_FOOTER_PRICES_TOOLTIP_BODY = "Prices are cached for this login. Re-query them after Master Merchant or Tamriel Trade Centre finishes importing fresh data.",
+    SI_BMW_FOOTER_PRICES_TOOLTIP_CLICK = "Click to refresh prices now.",
     SI_BMW_FOOTER_COVERAGE_LABEL = "Price coverage",
     SI_BMW_FOOTER_COVERAGE_VALUE = "%d/%d priced",
     SI_BMW_FOOTER_LOW_COVERAGE = "%d/%d unpriced!",

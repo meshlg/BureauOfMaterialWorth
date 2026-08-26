@@ -34,8 +34,9 @@ local stringformat = string.format
 --   showProfile           show the @account handle + character name on the panel's title line
 --   notificationMode      "off", "summary", "important", or "detailed" chat notification mode
 --   valueHistory          ring buffer of grand-total samples; { head = <last index, 0 = empty>,
---                         entries = { { t = unix, gold, items }, ... } }. See Valuation's
---                         RecordValuePoint/GetValueHistory for the wrap-around bookkeeping.
+--                         entries = { { t = unix, gold, items }, ... } }. One point per UI
+--                         session (login or /reloadui); later Craft Bag opens do not add
+--                         another. See Valuation's RecordValuePoint/GetValueHistory.
 --   snapshot              manual single snapshot of bag composition for the detail window's
 --                         diff view; nil until "Remember" is pressed (then overwritten). Material
 --                         entries are compact strings decoded by Valuation's CaptureSnapshot/GetDiffMaterials.

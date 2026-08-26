@@ -84,7 +84,8 @@ materials the total updates on its own.
   price has moved since it was last refreshed from a price source. The addon keeps
   its own compact price history for this - a material shows "-" until a price
   refresh has established a baseline, then a real change once a later refresh
-  observes it. A point is added roughly once a day; opening, sorting, or searching
+  observes it. A point is added once per login or `/reloadui`; later Craft Bag
+  opens in the same session update that point. Opening, sorting, or searching
   the table never changes that history.
 - The window is **movable** and closes with Escape or with the Craft Bag, so it
   never lingers over the rest of your UI.
@@ -160,7 +161,8 @@ materials the total updates on its own.
 ### Honest about its data
 - The footer separates **Inventory** (when the bag valuation last changed) from
   **Prices** (when LibPrice was last queried), so a deposit never masquerades as
-  fresh market data.
+  fresh market data. Click **Market prices** to clear the session cache and
+  re-query LibPrice - the same action as `/bmw refresh`.
 - **Coverage** reports how many slots are priced and the corresponding percentage
   (e.g. "468/469 priced · 99%"), plus the **price source** it drew from, shown
   compactly (MM / TTC / ATT, with a "+" when several contributed). When more than
@@ -174,14 +176,15 @@ materials the total updates on its own.
 - An optional **value-history sparkline** beneath the footer plots your total
   over time. Its newest sample is explicitly marked, and the header shows the
   overall percentage trend across the visible history. One point is recorded per
-  bag-open (at most once every few hours), keeping the last 90; hover it for the
-  oldest, newest, and net-change figures. Because points are spaced hours apart,
-  the graph appears once you have at least two and fills in meaningfully over
-  several days of play.
+  login or `/reloadui` (later Craft Bag opens in the same session do not add
+  another point), keeping the last 90; hover it for the oldest, newest, and net-change
+  figures. The graph appears once you have at least two points and fills in
+  over several days of play.
 - An optional **chat announcement** prints the bag's value the first time you open
   it each session, with the since-last-visit change when your stock moved.
 - `/bmw refresh` re-queries prices - handy after Master Merchant or Tamriel Trade
-  Centre finishes importing fresh data.
+  Centre finishes importing fresh data. The panel's **Market prices** row does
+  the same thing without opening settings.
 
 > **How the value-change delta works.** Craft Bag market prices do **not** update
 > live - a price source (Master Merchant / TTC / ATT) only refreshes its data

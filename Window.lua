@@ -669,6 +669,32 @@ function Window.Initialize()
     footerDeltaRow = CreateFooterRow(addon.name .. "_FooterDelta")
     footerGuidanceRow = CreateGuidanceRow(addon.name .. "_FooterGuidance")
 
+    -- The prices-age row is the in-panel counterpart of /bmw refresh: a click
+    -- clears the session price cache and re-queries LibPrice, which is the usual
+    -- next step after MM/TTC finishes importing. Hover explains; the "X ago"
+    -- value jumping to "just now" is the completion signal.
+    footerPriceRefreshRow.container:SetMouseEnabled(true)
+    footerPriceRefreshRow.container:SetHandler("OnMouseUp", function(_, button, upInside)
+        if button ~= MOUSE_BUTTON_INDEX_LEFT or not upInside then
+            return
+        end
+        local valuation = addon.Valuation
+        if valuation and valuation.ForceRefresh then
+            valuation.ForceRefresh()
+        end
+    end)
+    footerPriceRefreshRow.container:SetHandler("OnMouseEnter", function(self)
+        footerPriceRefreshRow.container:SetAlpha(1)
+        InitializeTooltip(InformationTooltip, self, TOPRIGHT, -6, 0, BOTTOMRIGHT)
+        UI.TipTitle(InformationTooltip, GetString(SI_BMW_FOOTER_PRICES_TOOLTIP_TITLE))
+        UI.TipLine(InformationTooltip, GetString(SI_BMW_FOOTER_PRICES_TOOLTIP_BODY), "soft")
+        UI.TipCaption(InformationTooltip, GetString(SI_BMW_FOOTER_PRICES_TOOLTIP_CLICK), "accent")
+    end)
+    footerPriceRefreshRow.container:SetHandler("OnMouseExit", function()
+        footerPriceRefreshRow.container:SetAlpha(FOOTER_ALPHA)
+        ClearTooltip(InformationTooltip)
+    end)
+
     footerPricesRow.container:SetMouseEnabled(true)
     footerPricesRow.container:SetHandler("OnMouseUp", function(_, button, upInside)
         if not upInside or button ~= MOUSE_BUTTON_INDEX_LEFT then

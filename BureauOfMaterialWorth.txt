@@ -1,5 +1,5 @@
 ## Title: |c6FCB9FBureau|r of Material Worth
-## Version: 4.3.160544
+## Version: 4.3.174707
 ## AddOnVersion: 43
 ## APIVersion: 101050 101051
 ## Author: |c6FCB9Fmeshlg|r @ArtieFox
@@ -7,7 +7,7 @@
 ## SavedVariables: BureauOfMaterialWorth_SavedVariables
 ## DependsOn: LibAddonMenu-2.0>=43 LibPrice>=70530
 
-; ReleaseDate: 26.08.2026 | 4.3.160544
+; ReleaseDate: 26.08.2026 | 4.3.174707
 ; !!! On release, update exactly two places: the ## Version / ## AddOnVersion
 ; lines above, and the `version` / `releaseDate` fields in
 ; BureauOfMaterialWorth.lua. The footer label, the settings dashboard and the

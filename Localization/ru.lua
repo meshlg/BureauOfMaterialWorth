@@ -59,7 +59,7 @@ local strings = {
     [SI_BMW_SETTING_BORDER_NAME] = "Показывать рамку",
     [SI_BMW_SETTING_BORDER_TOOLTIP] = "Рисовать рамку панели. Выключите для более чистого вида без рамки.",
     [SI_BMW_SETTING_VALUE_HISTORY_NAME] = "Показывать историю стоимости",
-    [SI_BMW_SETTING_VALUE_HISTORY_TOOLTIP] = "Рисовать внизу панели небольшой график стоимости ремесленной сумки во времени. Одна точка записывается при каждом открытии сумки (не чаще раза в несколько часов), хранятся последние 90 точек. Наведите курсор на график, чтобы увидеть самое старое, самое новое значения и итоговое изменение.",
+    [SI_BMW_SETTING_VALUE_HISTORY_TOOLTIP] = "Рисовать внизу панели небольшой график стоимости ремесленной сумки во времени. Одна точка записывается на вход в игру или /reloadui; повторные открытия сумки в той же сессии новую точку не добавляют. Хранятся последние 90 точек. Наведите курсор на график, чтобы увидеть самое старое, самое новое значения и итоговое изменение.",
     [SI_BMW_SETTING_PROFILE_NAME] = "Показывать метку аккаунта",
     [SI_BMW_SETTING_PROFILE_TOOLTIP] = "Показывать ваш @account и имя текущего персонажа в строке заголовка панели. Ремесленная сумка общая для всего аккаунта, поэтому @account указывает, чья это сумка. Выключите для более чистого заголовка.",
     [SI_BMW_SETTING_NOTIFY_VISIT_NAME] = "Сообщения в чат",
@@ -79,7 +79,7 @@ local strings = {
     [SI_BMW_SETTING_DEBUG_MODE_NAME] = "Режим отладки",
     [SI_BMW_SETTING_DEBUG_MODE_TOOLTIP] = "Определяет, сколько диагностических сообщений аддон выводит в чат.",
     [SI_BMW_SETTING_REFRESH_NAME] = "Обновить цены сейчас",
-    [SI_BMW_SETTING_REFRESH_TOOLTIP] = "Сбросить кэш цен и пересчитать стоимость ремесленной сумки. Полезно после того, как Master Merchant или Tamriel Trade Centre завершит загрузку свежих данных.",
+    [SI_BMW_SETTING_REFRESH_TOOLTIP] = "Сбросить кэш цен и пересчитать стоимость ремесленной сумки. Полезно после того, как Master Merchant или Tamriel Trade Centre завершит загрузку свежих данных. То же действие доступно по нажатию на строку «Рыночные цены» на панели.",
 
     -- Window
     [SI_BMW_PROFILE_ACCOUNT_CHAR] = "%s · %s",
@@ -278,6 +278,9 @@ local strings = {
     -- Window: footer (two-column label -> value rows)
     [SI_BMW_FOOTER_INVENTORY_LABEL] = "Содержимое сумки",
     [SI_BMW_FOOTER_PRICES_LABEL] = "Рыночные цены",
+    [SI_BMW_FOOTER_PRICES_TOOLTIP_TITLE] = "Рыночные цены",
+    [SI_BMW_FOOTER_PRICES_TOOLTIP_BODY] = "Цены кэшируются до выхода из игры или /reloadui. Запросите их заново после того, как Master Merchant или Tamriel Trade Centre закончит загрузку свежих данных.",
+    [SI_BMW_FOOTER_PRICES_TOOLTIP_CLICK] = "Нажмите, чтобы обновить цены сейчас.",
     [SI_BMW_FOOTER_COVERAGE_LABEL] = "Материалы с ценой",
     [SI_BMW_FOOTER_COVERAGE_VALUE] = "%d/%d с ценой",
     [SI_BMW_FOOTER_LOW_COVERAGE] = "%d/%d без цены!",
