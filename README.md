@@ -61,39 +61,60 @@ materials the total updates on its own.
 - **Click any category row** to open a separate, scrollable window listing *every
   individual material* in that profession - handy for "Other", which can hold
   hundreds of distinct materials.
+- **Click the grand total** to open the whole Craft Bag as one material list.
 - Each row shows the material's **icon**, its **name** (tinted by quality), a
   compact **price-source badge** (MM / TTC / ATT and other LibPrice sources), the
-  **quantity** you hold, and its **total value**. **Click any column header** to
-  sort by it (click again to flip direction); the table opens on **value,
-  highest first** - the "what to sell right now" order - so the stacks that make
-  up most of the bag's worth sit at the top.
+  **quantity** you hold, and its **total value**. Hover the **icon** for the
+  game's own item tooltip. **Shift-click** a row to insert the item link in chat;
+  the table header keeps that reminder visible. **Click any column header** to
+  sort by it (click again to flip direction), including Price dynamics and
+  Changes. A category list still opens on **value, highest first** - the "what
+  to sell right now" order - so the stacks that make up most of the bag's worth
+  sit at the top.
 - Choose a compact **Basic** table (material, quantity, value) for everyday
   scanning, or **Analytics** to additionally show cumulative share and price
-  change. The snapshot Changes view always retains its delta, share, and status
-  columns.
+  change. The switch sits on the table toolbar as well as in settings. The
+  snapshot Changes view always retains its delta, share, and status columns.
+- **Escape** closes the material table and the withdraw window. If the search box
+  has text, the first Escape clears it.
 - A **cumulative-share column** ("Cum %") shows the running share of the list's
   total value read top-down, so you can see at a glance that "the top few stacks
   are 80% of the worth" - haul those to the guild and skip the long tail.
 - A **price-change column** (▲/▼ with a percentage) shows how each material's
   price has moved since it was last refreshed from a price source. The addon keeps
-  its own price history for this - a material shows "-" until a price refresh has
-  established a baseline, then a real change once a later refresh observes it.
-  The baseline advances roughly once a day, so the figure reflects day-over-day
-  market drift rather than noise; opening, sorting, or searching the table never
-  changes that history.
-- The window is **movable** and closes with the Craft Bag, so it never lingers
-  over the rest of your UI.
+  its own compact price history for this - a material shows "-" until a price
+  refresh has established a baseline, then a real change once a later refresh
+  observes it. A point is added roughly once a day; opening, sorting, or searching
+  the table never changes that history.
+- The window is **movable** and closes with Escape or with the Craft Bag, so it
+  never lingers over the rest of your UI.
 
-### Search the whole Craft Bag
-- The material table has a **search box** that filters by name across *every*
-  category at once, not just the one you opened - type "ore", "rosin", "perfect"
-  and see every match in one list.
-- Matching is case-insensitive substring; clearing the box (or pressing Escape)
-  returns to the category you opened. Withdraw and queue work from search results
-  exactly as from a category.
-- Compact **All / Priced / No price** filters narrow the active category or search
-  results. Clicking the main panel's Coverage row opens the whole-bag **No price**
-  view directly.
+### Seven-day price dynamics
+- A **Price dynamics** row appears immediately below **Other**.
+  Its `up / down` counters and a compact threshold suffix (e.g. `20%`) show how
+  many held materials crossed the configured significant-movement threshold.
+- Clicking it opens a whole-bag analysis with the current unit price, net movement
+  from the oldest observation in the trailing seven days, maximum rise, and
+  maximum fall. Every earlier/later pair is analyzed, so a sharp one- or two-day
+  move remains visible even if the price later returns near its starting point.
+- Price-source changes are treated as a new comparable series: an MM-to-TTC/ATT
+  switch is not reported as a market move. Important and Detailed notification
+  modes announce new significant signals, direction reversals, or materially
+  stronger moves without repeating the same signal on every Craft Bag open.
+- Historical prices cannot be recovered retroactively from LibPrice. The row is
+  available immediately, but a material needs at least two recorded observations
+  before it can produce a signal; the full seven-day window fills over normal use.
+
+### Search the current list
+- The material table has a **search box** that filters the rows already on
+  screen: the open category, the whole-bag list, Changes, or Price dynamics.
+  Type a name, a price source (`mm`, `ttc`), `unpriced`, or a quality word
+  (`epic`, `gold`). Clearing the box (or pressing Escape) restores the current
+  view. Withdraw and queue still work from the filtered rows.
+- Compact **All / Priced / No price** filters narrow the category or whole-bag
+  list. Clicking the main panel's Coverage row opens the whole-bag **No price**
+  view directly. Sort order and the price filter persist while you move between
+  categories, Changes, and Price dynamics in the same session.
 
 ### Snapshot and changes
 
@@ -133,7 +154,8 @@ materials the total updates on its own.
   Its quantities, capacity, and current prices refresh while it is open.
 - The **default quantity is keyed to item quality**, so a careless click cannot
   dump a whole stack of something precious: cheap bulk mats default high, valuable
-  mats low. You can always raise it up to the maximum.
+  mats low. A **Max** preset fills the current withdrawable amount, and you can
+  always raise a quantity up to that limit.
 
 ### Honest about its data
 - The footer separates **Inventory** (when the bag valuation last changed) from
